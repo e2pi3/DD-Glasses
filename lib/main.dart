@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
 
+import 'screens/home.dart';
+import 'screens/setting.dart';
+import 'screens/statistics.dart';
+import 'theme.dart';
+
 void main() {
   runApp(const MyApp());
 }
@@ -7,115 +12,192 @@ void main() {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      title: 'DD Glasses',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.light,
+      home: const MainNavigation(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+/// 하단 네비게이션을 소유하는 루트 화면.
+/// 탭 전환 시 하단바가 다시 그려지지 않도록 IndexedStack으로 화면을 유지한다.
+class MainNavigation extends StatefulWidget {
+  const MainNavigation({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<MainNavigation> createState() => _MainNavigationState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _MainNavigationState extends State<MainNavigation> {
+  int _selectedIndex = 1;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  static const List<Widget> _screens = [
+    StatisticsScreen(),
+    HomeScreen(),
+    SettingScreen(),
+  ];
+
+  void _onTabSelected(int index) {
+    setState(() => _selectedIndex = index);
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+      extendBody: true,
+      body: IndexedStack(index: _selectedIndex, children: _screens),
+      bottomNavigationBar: _MainBottomNavBar(
+        currentIndex: _selectedIndex,
+        onTap: _onTabSelected,
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+    );
+  }
+}
+
+/// 통계 - 홈(돌출된 원형 버튼) - 설정 순서의 하단바.
+/// 가운데 원형 홈 버튼을 중심으로 실린더(캡슐) 모양이 양옆으로 뻗어나가는 형태.
+class _MainBottomNavBar extends StatelessWidget {
+  const _MainBottomNavBar({required this.currentIndex, required this.onTap});
+
+  final int currentIndex;
+  final ValueChanged<int> onTap;
+
+  static const double _barHeight = 60;
+  static const double _homeButtonSize = 72;
+  static const double _horizontalMargin = 20;
+  static const double _bottomMargin = 16;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return SafeArea(
+      minimum: const EdgeInsets.only(bottom: _bottomMargin),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: _horizontalMargin),
+        child: SizedBox(
+          height: _homeButtonSize,
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              Container(
+                height: _barHeight,
+                decoration: BoxDecoration(
+                  color: colorScheme.surface,
+                  borderRadius: BorderRadius.circular(_barHeight / 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.10),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _NavItem(
+                        icon: Icons.bar_chart_rounded,
+                        label: '통계',
+                        selected: currentIndex == 0,
+                        onTap: () => onTap(0),
+                      ),
+                    ),
+                    const SizedBox(width: _homeButtonSize),
+                    Expanded(
+                      child: _NavItem(
+                        icon: Icons.settings_rounded,
+                        label: '설정',
+                        selected: currentIndex == 2,
+                        onTap: () => onTap(2),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _HomeButton(selected: currentIndex == 1, onTap: () => onTap(1)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  const _NavItem({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final color = selected ? colorScheme.primary : AppColors.textSecondary;
+
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: color, size: 24),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: color),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeButton extends StatelessWidget {
+  const _HomeButton({required this.selected, required this.onTap});
+
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: _MainBottomNavBar._homeButtonSize,
+        height: _MainBottomNavBar._homeButtonSize,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: selected ? colorScheme.primary : colorScheme.primaryContainer,
+          border: Border.all(color: AppColors.background, width: 4),
+          boxShadow: [
+            BoxShadow(
+              color: colorScheme.primary.withValues(alpha: 0.35),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
             ),
           ],
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+        child: Icon(
+          Icons.home_rounded,
+          color: selected ? colorScheme.onPrimary : colorScheme.primary,
+          size: 28,
+        ),
       ),
     );
   }
