@@ -5,6 +5,8 @@ import 'screens/setting.dart';
 import 'screens/statistics.dart';
 import 'theme.dart';
 
+const List<String> _kTabTitles = ['통계', '홈', '설정'];
+
 void main() {
   runApp(const MyApp());
 }
@@ -24,7 +26,6 @@ class MyApp extends StatelessWidget {
 }
 
 /// 하단 네비게이션을 소유하는 루트 화면.
-/// 탭 전환 시 하단바가 다시 그려지지 않도록 IndexedStack으로 화면을 유지한다.
 class MainNavigation extends StatefulWidget {
   const MainNavigation({super.key});
 
@@ -49,10 +50,36 @@ class _MainNavigationState extends State<MainNavigation> {
   Widget build(BuildContext context) {
     return Scaffold(
       extendBody: true,
+      appBar: _MainAppBar(title: _kTabTitles[_selectedIndex]),
       body: IndexedStack(index: _selectedIndex, children: _screens),
       bottomNavigationBar: _MainBottomNavBar(
         currentIndex: _selectedIndex,
         onTap: _onTabSelected,
+      ),
+    );
+  }
+}
+
+/// 바탕색과 동일한 배경에 하단 구분선만 있는 상단바.
+/// 가운데에는 현재 탭 이름만 표시한다.
+class _MainAppBar extends StatelessWidget implements PreferredSizeWidget {
+  const _MainAppBar({required this.title});
+
+  final String title;
+
+  @override
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
+
+  @override
+  Widget build(BuildContext context) {
+    return AppBar(
+      backgroundColor: AppColors.background,
+      elevation: 0,
+      centerTitle: true,
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+      bottom: PreferredSize(
+        preferredSize: const Size.fromHeight(1),
+        child: Container(color: AppColors.textSecondary.withValues(alpha: 0.2), height: 1),
       ),
     );
   }
@@ -103,7 +130,6 @@ class _MainBottomNavBar extends StatelessWidget {
                     Expanded(
                       child: _NavItem(
                         icon: Icons.bar_chart_rounded,
-                        label: '통계',
                         selected: currentIndex == 0,
                         onTap: () => onTap(0),
                       ),
@@ -112,7 +138,6 @@ class _MainBottomNavBar extends StatelessWidget {
                     Expanded(
                       child: _NavItem(
                         icon: Icons.settings_rounded,
-                        label: '설정',
                         selected: currentIndex == 2,
                         onTap: () => onTap(2),
                       ),
@@ -132,13 +157,11 @@ class _MainBottomNavBar extends StatelessWidget {
 class _NavItem extends StatelessWidget {
   const _NavItem({
     required this.icon,
-    required this.label,
     required this.selected,
     required this.onTap,
   });
 
   final IconData icon;
-  final String label;
   final bool selected;
   final VoidCallback onTap;
 
@@ -149,19 +172,7 @@ class _NavItem extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: color),
-          ),
-        ],
-      ),
+      child: Center(child: Icon(icon, color: color, size: 24)),
     );
   }
 }
