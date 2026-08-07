@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../connect.dart';
+import '../device.dart';
 import '../theme.dart';
 
 /// 졸음감지 보안경(엣지 디바이스)과의 연결 상태를 보여주는 홈 화면.
@@ -13,7 +14,7 @@ class HomeScreen extends StatelessWidget {
     final connection = DeviceConnection.instance;
 
     return ListenableBuilder(
-      listenable: connection,
+      listenable: Listenable.merge([connection, DeviceInfo.instance]),
       builder: (context, _) {
         return Center(
           child: switch (connection.status) {
@@ -69,8 +70,8 @@ class _DeviceDisconnectedView extends StatelessWidget {
   }
 }
 
-// TODO(bluetooth): 배터리/졸음 감지 신호 등 실제 데이터를 받아와 표시하는
-// 화면으로 채운다. 지금은 기기 ID만 보여주는 자리 표시 상태.
+// TODO(bluetooth): 졸음 감지 신호 등 실제 데이터를 받아와 표시하는 화면으로
+// 채운다. 지금은 기기 ID / 배터리 / 러닝타임만 보여주는 자리 표시 상태.
 class _DeviceInfoView extends StatelessWidget {
   const _DeviceInfoView({required this.deviceId});
 
@@ -78,6 +79,8 @@ class _DeviceInfoView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final deviceInfo = DeviceInfo.instance;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -92,6 +95,79 @@ class _DeviceInfoView extends StatelessWidget {
           const SizedBox(height: 4),
           Text(deviceId!, style: Theme.of(context).textTheme.bodySmall),
         ],
+        const SizedBox(height: 16),
+        SizedBox(
+          width: 220,
+          child: Row(
+            children: [
+              Expanded(
+                child: Center(
+                  child: _InfoStat(
+                    icon: Icons.battery_full_rounded,
+                    label: '${deviceInfo.batteryLevel}%',
+                    iconColor: _batteryColor(deviceInfo.batteryLevel),
+                  ),
+                ),
+              ),
+              const SizedBox(
+                height: 48,
+                child: VerticalDivider(thickness: 1, color: Color(0x4D1A1C1E)),
+              ),
+              Expanded(
+                child: Center(
+                  child: _InfoStat(
+                    icon: Icons.timer_outlined,
+                    label: _formatDuration(deviceInfo.runningTime),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String _formatDuration(Duration duration) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    final hours = two(duration.inHours);
+    final minutes = two(duration.inMinutes.remainder(60));
+    final seconds = two(duration.inSeconds.remainder(60));
+    return '$hours:$minutes:$seconds';
+  }
+
+  static Color _batteryColor(int level) {
+    if (level <= 10) return const Color(0xFFFF3B30);
+    if (level < 30) return const Color(0xFFFF9500);
+    return const Color(0xFF34C759);
+  }
+}
+
+class _InfoStat extends StatelessWidget {
+  const _InfoStat({
+    required this.icon,
+    required this.label,
+    this.iconColor = AppColors.textSecondary,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color iconColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 28, color: iconColor),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ],
     );
   }

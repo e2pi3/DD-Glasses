@@ -7,7 +7,7 @@ import '../widget.dart';
 /// 설정 화면.
 /// 기기 연결 정보 칸은 고정 크기로 상단에 항상 표시하고, 굵은 구분선으로
 /// 나머지 항목들과 분리한다. 기기가 연결된 상태일 때만 그 아래로
-/// 기기 연결 해제 / 피드백 감도 조절 / 경고음 음량 설정 항목을 얇은 구분선과 함께 보여준다.
+/// 기기 연결 해제 / 피드백 강도 조절 / 경고음 음량 설정 항목을 얇은 구분선과 함께 보여준다.
 class SettingScreen extends StatelessWidget {
   const SettingScreen({super.key});
 
@@ -54,7 +54,7 @@ class SettingScreen extends StatelessWidget {
               _thinDivider,
               _SettingTile(
                 icon: Icons.tune_rounded,
-                title: '피드백 감도 조절',
+                title: '피드백 강도 조절',
                 onTap: () {},
               ),
               _thinDivider,
