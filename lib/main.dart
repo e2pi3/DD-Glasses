@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'connect.dart';
 import 'screens/home.dart';
 import 'screens/setting.dart';
 import 'screens/statistics.dart';
@@ -76,11 +78,47 @@ class _MainAppBar extends StatelessWidget implements PreferredSizeWidget {
       backgroundColor: AppColors.background,
       elevation: 0,
       centerTitle: true,
+      leading: kDebugMode ? const _DebugConnectionMenu() : null,
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
       bottom: PreferredSize(
         preferredSize: const Size.fromHeight(1),
         child: Container(color: AppColors.textSecondary.withValues(alpha: 0.2), height: 1),
       ),
+    );
+  }
+}
+
+/// 실제 블루투스 연동 전까지, 좌측 상단 팝업 메뉴로 연결 상태를 임의로
+/// 바꿔볼 수 있게 하는 디버그용 임시 위젯. 실제 연동 코드가 들어오면 제거한다.
+class _DebugConnectionMenu extends StatelessWidget {
+  const _DebugConnectionMenu();
+
+  static const _labels = {
+    ConnectionStatus.bluetoothOff: '블루투스 꺼짐',
+    ConnectionStatus.bluetoothOn: '블루투스 켜짐 (미연결)',
+    ConnectionStatus.deviceConnected: '기기 연결됨',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final connection = DeviceConnection.instance;
+
+    return ListenableBuilder(
+      listenable: connection,
+      builder: (context, _) {
+        return PopupMenuButton<ConnectionStatus>(
+          icon: const Icon(Icons.bug_report_rounded),
+          tooltip: '디버그: 연결 상태 변경',
+          onSelected: connection.debugSetStatus,
+          itemBuilder: (context) => ConnectionStatus.values.map((status) {
+            return CheckedPopupMenuItem<ConnectionStatus>(
+              value: status,
+              checked: connection.status == status,
+              child: Text(_labels[status]!),
+            );
+          }).toList(),
+        );
+      },
     );
   }
 }

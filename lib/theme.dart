@@ -13,6 +13,8 @@ class AppColors {
 
   static const Color textPrimary = Color(0xFF1A1C1E);
   static const Color textSecondary = Color(0xFF6B7280);
+
+  static const Color divider = Color(0x1F1A1C1E);
 }
 
 /// 앱 전역 테마. main.dart에서는 AppTheme.light만 참조한다.
