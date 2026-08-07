@@ -165,6 +165,8 @@ class _NavItem extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
 
+  static const double _badgeSize = 40;
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -172,29 +174,76 @@ class _NavItem extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
-      child: Center(child: Icon(icon, color: color, size: 24)),
+      customBorder: const CircleBorder(),
+      child: Center(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          width: _badgeSize,
+          height: _badgeSize,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: selected
+                ? colorScheme.primary.withValues(alpha: 0.12)
+                : Colors.transparent,
+          ),
+          child: Icon(icon, color: color, size: 24),
+        ),
+      ),
     );
   }
 }
 
-class _HomeButton extends StatelessWidget {
+/// 선택 시 원이 가운데에서부터 퍼져나가며 채워지는 홈 버튼.
+class _HomeButton extends StatefulWidget {
   const _HomeButton({required this.selected, required this.onTap});
 
   final bool selected;
   final VoidCallback onTap;
 
   @override
+  State<_HomeButton> createState() => _HomeButtonState();
+}
+
+class _HomeButtonState extends State<_HomeButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _fillController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 100),
+    value: widget.selected ? 1 : 0,
+  );
+
+  @override
+  void didUpdateWidget(covariant _HomeButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.selected != oldWidget.selected) {
+      if (widget.selected) {
+        _fillController.forward();
+      } else {
+        _fillController.reverse();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _fillController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
     return GestureDetector(
-      onTap: onTap,
+      onTap: widget.onTap,
       child: Container(
         width: _MainBottomNavBar._homeButtonSize,
         height: _MainBottomNavBar._homeButtonSize,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: selected ? colorScheme.primary : colorScheme.primaryContainer,
+          color: colorScheme.primaryContainer,
           border: Border.all(color: AppColors.background, width: 4),
           boxShadow: [
             BoxShadow(
@@ -204,10 +253,44 @@ class _HomeButton extends StatelessWidget {
             ),
           ],
         ),
-        child: Icon(
-          Icons.home_rounded,
-          color: selected ? colorScheme.onPrimary : colorScheme.primary,
-          size: 28,
+        child: ClipOval(
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Positioned.fill(
+                child: AnimatedBuilder(
+                  animation: _fillController,
+                  builder: (context, child) {
+                    return Transform.scale(
+                      scale: Curves.easeOut.transform(_fillController.value),
+                      child: child,
+                    );
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ),
+              AnimatedBuilder(
+                animation: _fillController,
+                builder: (context, child) {
+                  final iconColor = Color.lerp(
+                    colorScheme.primary,
+                    colorScheme.onPrimary,
+                    _fillController.value,
+                  );
+                  return Icon(
+                    Icons.home_rounded,
+                    color: iconColor,
+                    size: 28,
+                  );
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
