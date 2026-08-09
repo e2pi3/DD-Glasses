@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
@@ -18,8 +16,9 @@ class AppDialogAction {
   final bool isDestructive;
 }
 
-/// 뒷배경을 블러 처리하고, 안내 문구와 버튼들을 구분선으로 나눠 보여주는
-/// 공용 확인 팝업. 문구([message])와 버튼 목록([actions])만 정하면 되고,
+/// 뒷배경을 어둡게 dim 처리하고 카드에 그림자를 줘서 떠 있는 느낌을 내는,
+/// 안내 문구와 버튼들을 구분선으로 나눠 보여주는 공용 확인 팝업.
+/// 문구([message])와 버튼 목록([actions])만 정하면 되고,
 /// 버튼 개수에 따라 문구 아래 가로 구분선 + 버튼 사이 세로 구분선이 자동으로
 /// 배치되어 T자 형태의 구분선을 이룬다.
 Future<T?> showAppDialog<T>({
@@ -30,7 +29,7 @@ Future<T?> showAppDialog<T>({
   return showGeneralDialog<T>(
     context: context,
     barrierLabel: '',
-    barrierColor: Colors.black.withValues(alpha: 0.05),
+    barrierColor: Colors.black.withValues(alpha: 0.35),
     transitionDuration: const Duration(milliseconds: 180),
     pageBuilder: (context, animation, secondaryAnimation) {
       return _AppDialog(message: message, actions: actions);
@@ -61,56 +60,59 @@ class _AppDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        Positioned.fill(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
-            child: const SizedBox.expand(),
-          ),
-        ),
         Center(
           child: Material(
             color: Colors.transparent,
             child: Container(
               width: _cardWidth,
               decoration: BoxDecoration(
-                color: AppColors.surface,
                 borderRadius: BorderRadius.circular(16),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 28,
-                    ),
-                    child: Text(
-                      message,
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                  ),
-                  const Divider(height: 1, thickness: 1, color: AppColors.divider),
-                  SizedBox(
-                    height: _buttonHeight,
-                    child: Row(
-                      children: [
-                        for (var i = 0; i < actions.length; i++) ...[
-                          if (i > 0)
-                            const VerticalDivider(
-                              width: 1,
-                              thickness: 1,
-                              color: AppColors.divider,
-                            ),
-                          Expanded(
-                            child: _AppDialogButton(action: actions[i]),
-                          ),
-                        ],
-                      ],
-                    ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.25),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
                   ),
                 ],
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Container(
+                decoration: const BoxDecoration(color: AppColors.surface),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 28,
+                      ),
+                      child: Text(
+                        message,
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ),
+                    const Divider(height: 1, thickness: 1, color: AppColors.divider),
+                    SizedBox(
+                      height: _buttonHeight,
+                      child: Row(
+                        children: [
+                          for (var i = 0; i < actions.length; i++) ...[
+                            if (i > 0)
+                              const VerticalDivider(
+                                width: 1,
+                                thickness: 1,
+                                color: AppColors.divider,
+                              ),
+                            Expanded(
+                              child: _AppDialogButton(action: actions[i]),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
