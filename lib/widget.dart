@@ -2,6 +2,43 @@ import 'package:flutter/material.dart';
 
 import 'theme.dart';
 
+/// 모서리가 둥근 사각형 카드 위에 배경과 구분되도록 콘텐츠를 띄우는 공용 컨테이너.
+/// 화면 전반의 정보 블록(기기 연결 상태, 설정 항목 등)에서 재사용한다.
+class AppCard extends StatelessWidget {
+  const AppCard({
+    super.key,
+    required this.child,
+    this.padding = EdgeInsets.zero,
+  });
+
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+
+  static final BorderRadius _radius = BorderRadius.circular(20);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: _radius,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: AppColors.surface,
+        borderRadius: _radius,
+        clipBehavior: Clip.antiAlias,
+        child: Padding(padding: padding, child: child),
+      ),
+    );
+  }
+}
+
 /// [showAppDialog]에 넘길 버튼 하나를 정의한다.
 /// [isDestructive]가 true면 경고성 동작(연결 해제 등)임을 나타내는 강조 색으로 표시된다.
 class AppDialogAction {
@@ -61,58 +98,56 @@ class _AppDialog extends StatelessWidget {
     return Stack(
       children: [
         Center(
-          child: Material(
-            color: Colors.transparent,
-            child: Container(
-              width: _cardWidth,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.25),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
+          child: Container(
+            width: _cardWidth,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.25),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Material(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(16),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 28,
+                    ),
+                    child: Text(
+                      message,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ),
+                  const Divider(height: 1, thickness: 1, color: AppColors.divider),
+                  SizedBox(
+                    height: _buttonHeight,
+                    child: Row(
+                      children: [
+                        for (var i = 0; i < actions.length; i++) ...[
+                          if (i > 0)
+                            const VerticalDivider(
+                              width: 1,
+                              thickness: 1,
+                              color: AppColors.divider,
+                            ),
+                          Expanded(
+                            child: _AppDialogButton(action: actions[i]),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                 ],
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Container(
-                decoration: const BoxDecoration(color: AppColors.surface),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 28,
-                      ),
-                      child: Text(
-                        message,
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ),
-                    const Divider(height: 1, thickness: 1, color: AppColors.divider),
-                    SizedBox(
-                      height: _buttonHeight,
-                      child: Row(
-                        children: [
-                          for (var i = 0; i < actions.length; i++) ...[
-                            if (i > 0)
-                              const VerticalDivider(
-                                width: 1,
-                                thickness: 1,
-                                color: AppColors.divider,
-                              ),
-                            Expanded(
-                              child: _AppDialogButton(action: actions[i]),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
               ),
             ),
           ),

@@ -5,20 +5,17 @@ import '../theme.dart';
 import '../widget.dart';
 
 /// 설정 화면.
-/// 기기 연결 정보 칸은 고정 크기로 상단에 항상 표시하고, 굵은 구분선으로
-/// 나머지 항목들과 분리한다. 기기가 연결된 상태일 때만 그 아래로
-/// 기기 연결 해제 / 피드백 강도 조절 / 경고음 음량 설정 항목을 얇은 구분선과 함께 보여준다.
+/// 기기 연결 정보는 별도의 카드로 상단에 항상 표시하고, 그 아래로 설정 항목들을
+/// 모아놓은 카드를 배치한다. 기기가 연결된 상태일 때만 설정 카드 안에
+/// 기기 연결 해제 / 피드백 강도 조절 / 경고음 음량 설정 항목을 얇은 구분선으로 나눠 보여준다.
 class SettingScreen extends StatelessWidget {
   const SettingScreen({super.key});
 
   static const _thinDivider = Divider(
     height: 1,
     thickness: 1,
-    color: AppColors.divider,
-  );
-  static const _thickDivider = Divider(
-    height: 8,
-    thickness: 8,
+    indent: 20,
+    endIndent: 20,
     color: AppColors.divider,
   );
 
@@ -30,38 +27,44 @@ class SettingScreen extends StatelessWidget {
       listenable: connection,
       builder: (context, _) {
         return ListView(
-          padding: EdgeInsets.zero,
+          padding: const EdgeInsets.all(16),
           children: [
-            _DeviceInfoTile(connection: connection),
-            _thickDivider,
+            AppCard(child: _DeviceInfoTile(connection: connection)),
             if (connection.isConnected) ...[
-              _SettingTile(
-                icon: Icons.bluetooth_disabled_rounded,
-                title: '기기 연결 해제',
-                onTap: () => showAppDialog(
-                  context: context,
-                  message: '연결을 해제하시겠습니까?',
-                  actions: [
-                    const AppDialogAction(label: '닫기'),
-                    AppDialogAction(
-                      label: '해제',
-                      isDestructive: true,
-                      onPressed: connection.disconnect,
+              const SizedBox(height: 16),
+              AppCard(
+                child: Column(
+                  children: [
+                    _SettingTile(
+                      icon: Icons.bluetooth_disabled_rounded,
+                      title: '기기 연결 해제',
+                      onTap: () => showAppDialog(
+                        context: context,
+                        message: '연결을 해제하시겠습니까?',
+                        actions: [
+                          const AppDialogAction(label: '닫기'),
+                          AppDialogAction(
+                            label: '해제',
+                            isDestructive: true,
+                            onPressed: connection.disconnect,
+                          ),
+                        ],
+                      ),
+                    ),
+                    _thinDivider,
+                    _SettingTile(
+                      icon: Icons.tune_rounded,
+                      title: '피드백 강도 조절',
+                      onTap: () {},
+                    ),
+                    _thinDivider,
+                    _SettingTile(
+                      icon: Icons.volume_up_rounded,
+                      title: '경고음 음량 설정',
+                      onTap: () {},
                     ),
                   ],
                 ),
-              ),
-              _thinDivider,
-              _SettingTile(
-                icon: Icons.tune_rounded,
-                title: '피드백 강도 조절',
-                onTap: () {},
-              ),
-              _thinDivider,
-              _SettingTile(
-                icon: Icons.volume_up_rounded,
-                title: '경고음 음량 설정',
-                onTap: () {},
               ),
             ],
           ],

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../connect.dart';
 import '../device.dart';
 import '../theme.dart';
+import '../widget.dart';
 
 /// 졸음감지 보안경(엣지 디바이스)과의 연결 상태를 보여주는 홈 화면.
 /// 연결 상태는 DeviceConnection(connect.dart)에서 전역으로 관리한다.
@@ -16,14 +17,25 @@ class HomeScreen extends StatelessWidget {
     return ListenableBuilder(
       listenable: Listenable.merge([connection, DeviceInfo.instance]),
       builder: (context, _) {
-        return Center(
-          child: switch (connection.status) {
-            ConnectionStatus.bluetoothOff => const _BluetoothOffView(),
-            ConnectionStatus.bluetoothOn => const _DeviceDisconnectedView(),
-            ConnectionStatus.deviceConnected => _DeviceInfoView(
-              deviceId: connection.deviceId,
+        return Padding(
+          padding: const EdgeInsets.only(top: 16, left: 16, right: 16),
+          child: SizedBox(
+            width: double.infinity,
+            child: AppCard(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 32,
+                vertical: 100, // 홈화면 메인 카드 위아래 여백
+              ),
+              child: switch (connection.status) {
+                ConnectionStatus.bluetoothOff => const _BluetoothOffView(),
+                ConnectionStatus.bluetoothOn =>
+                  const _DeviceDisconnectedView(),
+                ConnectionStatus.deviceConnected => _DeviceInfoView(
+                  deviceId: connection.deviceId,
+                ),
+              },
             ),
-          },
+          ),
         );
       },
     );
