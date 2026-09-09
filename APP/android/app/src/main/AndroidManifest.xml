@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- BLE 통신 (담당: 한지원). Android 12(API 31) 이상:
+    <!-- BLE 통신. Android 12(API 31) 이상:
          neverForLocation은 "스캔 결과로 위치를 추론하지 않는다"는 선언이고,
          이게 있어야 위치 권한 없이 스캔이 된다. -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
