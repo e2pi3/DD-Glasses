@@ -26,6 +26,22 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+
+	<!-- BLE 통신 (담당: 한지원). iOS 13+에서 이 문구가 없으면 권한 창 자체가
+	     안 뜨고 스캔이 조용히 실패한다. -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>보안경과 연결해 졸음 감지 데이터를 받기 위해 블루투스를 사용합니다.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>보안경과 연결해 졸음 감지 데이터를 받기 위해 블루투스를 사용합니다.</string>
+
+	<!-- 착용자가 폰을 주머니에 넣고 있어도 알림을 계속 받으려면 필요.
+	     백그라운드에서는 서비스 UUID를 명시한 스캔만 결과가 오는데,
+	     AwakeBleClient는 이미 그렇게 스캔한다. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+	</array>
+
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -1,4 +1,32 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- BLE 통신 (담당: 한지원). Android 12(API 31) 이상:
+         neverForLocation은 "스캔 결과로 위치를 추론하지 않는다"는 선언이고,
+         이게 있어야 위치 권한 없이 스캔이 된다. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- Android 11(API 30) 이하: 위치 권한 + 위치 서비스 ON이 둘 다 없으면
+         스캔 결과가 에러 없이 그냥 빈 배열로 옵니다. -->
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+
+    <!-- 착용자가 폰을 주머니에 넣고 있어도 링크가 유지되게 하려면 필요
+         (지금은 실제 포그라운드 서비스를 아직 붙이지 않았지만 권한만 먼저 선언). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <uses-feature android:name="android.hardware.bluetooth_le"
+        android:required="true" />
+
     <application
         android:label="dd_glasses"
         android:name="${applicationName}"
