@@ -12,12 +12,12 @@
 DD-Glasses/
 ├── ALGO/       # 내부 졸음 감지 알고리즘
 ├── APP/        # Flutter 기반 프론트엔드 앱
-│   └── lib/src/  # BLE 통신 레이어 — 담당: 한지원. 자세한 설명은 APP/lib/src/README.md
+│   └── lib/src/  # BLE 통신 레이어 — 자세한 설명은 APP/lib/src/README.md
 └── DEVICE/     # ESP32/Arduino 기반 디바이스 코드
     └── ble/    # GATT 통신 참고 구현 — 담당: 한지원. device.cpp는 건드리지 않음
 ```
 
-## 🔗 BLE 통신 (한지원)
+## 🔗 BLE 통신
 
 Flutter 앱 ↔ XIAO ESP32-S3(Sense) 사이 BLE 링크. 보드 없이도
 `APP/assets/replay/`의 하드웨어팀 캡처 데이터로 전체 파이프라인을
