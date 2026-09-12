@@ -39,6 +39,8 @@ dependencies:
   flutter_blue_plus: ^1.35.3
   # Android 12+ 런타임 블루투스 권한 요청.
   permission_handler: ^11.3.1
+  # 통계 화면 차트.
+  fl_chart: ^0.68.0
 
 dev_dependencies:
   flutter_test:
