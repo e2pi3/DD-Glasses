@@ -19,9 +19,8 @@ enum ConnectionStatus {
 /// 홈/설정 화면이 같은 상태를 보고 갱신할 수 있도록 싱글턴으로 둔다.
 ///
 /// 폰의 블루투스 어댑터 on/off는 [FlutterBluePlus.adapterState] 스트림을 구독해
-/// 자동으로 반영하고, [connectToGlasses]로 DD-GLASSES를 스캔 → GATT 연결 →
-/// characteristic 구독까지 수행한다. 기기가 보내는 값은 [eyeStates] /
-/// [batteryLevels] 스트림으로 내보내며 DeviceInfo(device.dart)가 이를 받아 보관한다.
+/// 자동으로 반영하고, [connectToGlasses]로 DD-GLASSES를 스캔 → GATT 연결까지 수행한다.
+/// 지금은 연결 여부만 다루며, characteristic 구독(눈 상태/배터리)은 아직 붙이지 않았다.
 class DeviceConnection extends ChangeNotifier {
   DeviceConnection._() {
     _init();
@@ -43,15 +42,9 @@ class DeviceConnection extends ChangeNotifier {
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
 
-  final _eyeStateController = StreamController<EyeState>.broadcast();
-  final _batteryController = StreamController<int>.broadcast();
-  Stream<EyeState> get eyeStates => _eyeStateController.stream;
-  Stream<int> get batteryLevels => _batteryController.stream;
-
   BluetoothDevice? _device;
   StreamSubscription<BluetoothAdapterState>? _adapterStateSub;
   StreamSubscription<BluetoothConnectionState>? _deviceStateSub;
-  final List<StreamSubscription<List<int>>> _valueSubs = [];
 
   Future<void> _init() async {
     await _ensureBluetoothPermissions();
@@ -165,40 +158,6 @@ class DeviceConnection extends ChangeNotifier {
       }
     });
 
-    final services = await device.discoverServices();
-    final eyeChar = _findChar(
-      services,
-      BleProtocol.eyeService,
-      BleProtocol.eyeStateChar,
-    );
-    if (eyeChar == null) {
-      throw StateError('eye state characteristic not found');
-    }
-    final batteryChar = _findChar(
-      services,
-      BleProtocol.batteryService,
-      BleProtocol.batteryLevelChar,
-    );
-
-    _valueSubs.add(
-      eyeChar.onValueReceived.listen((bytes) {
-        final eyeState = EyeState.parse(bytes);
-        if (eyeState != null) _eyeStateController.add(eyeState);
-      }),
-    );
-    await eyeChar.setNotifyValue(true);
-
-    if (batteryChar != null) {
-      _valueSubs.add(
-        batteryChar.onValueReceived.listen((bytes) {
-          if (bytes.isNotEmpty) _batteryController.add(bytes.first);
-        }),
-      );
-      await batteryChar.setNotifyValue(true);
-      // 알림은 값이 바뀔 때만 오므로 현재 값을 한 번 읽어둔다.
-      await batteryChar.read();
-    }
-
     // 연결 과정 중 기기가 끊겼다면 connectionState 리스너가 이미 정리했다.
     if (_device != device) throw StateError('disconnected during setup');
 
@@ -206,20 +165,6 @@ class DeviceConnection extends ChangeNotifier {
         ? '${device.platformName} (${device.remoteId.str})'
         : device.remoteId.str;
     _setStatus(ConnectionStatus.deviceConnected);
-  }
-
-  BluetoothCharacteristic? _findChar(
-    List<BluetoothService> services,
-    Guid serviceUuid,
-    Guid charUuid,
-  ) {
-    for (final service in services) {
-      if (service.uuid != serviceUuid) continue;
-      for (final c in service.characteristics) {
-        if (c.uuid == charUuid) return c;
-      }
-    }
-    return null;
   }
 
   void _fail(String message) {
@@ -230,10 +175,6 @@ class DeviceConnection extends ChangeNotifier {
   }
 
   void _clearDevice() {
-    for (final sub in _valueSubs) {
-      sub.cancel();
-    }
-    _valueSubs.clear();
     _deviceStateSub?.cancel();
     _deviceStateSub = null;
     _device = null;
@@ -252,8 +193,6 @@ class DeviceConnection extends ChangeNotifier {
   void dispose() {
     _adapterStateSub?.cancel();
     _clearDevice();
-    _eyeStateController.close();
-    _batteryController.close();
     super.dispose();
   }
 }
