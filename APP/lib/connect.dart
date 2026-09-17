@@ -19,8 +19,9 @@ enum ConnectionStatus {
 /// 홈/설정 화면이 같은 상태를 보고 갱신할 수 있도록 싱글턴으로 둔다.
 ///
 /// 폰의 블루투스 어댑터 on/off는 [FlutterBluePlus.adapterState] 스트림을 구독해
-/// 자동으로 반영하고, [connectToGlasses]로 DD-GLASSES를 스캔 → GATT 연결까지 수행한다.
-/// 지금은 연결 여부만 다루며, characteristic 구독(눈 상태/배터리)은 아직 붙이지 않았다.
+/// 자동으로 반영하고, [connectToGlasses]로 DD-GLASSES를 스캔 → GATT 연결 →
+/// proximity characteristic 구독까지 수행한다. 기기가 보내는 값은 [proximitySamples]
+/// 스트림으로 내보내며 ProximityLog(sensor_log.dart)가 이를 받아 보관한다.
 class DeviceConnection extends ChangeNotifier {
   DeviceConnection._() {
     _init();
@@ -42,9 +43,13 @@ class DeviceConnection extends ChangeNotifier {
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
 
+  final _proximityController = StreamController<int>.broadcast();
+  Stream<int> get proximitySamples => _proximityController.stream;
+
   BluetoothDevice? _device;
   StreamSubscription<BluetoothAdapterState>? _adapterStateSub;
   StreamSubscription<BluetoothConnectionState>? _deviceStateSub;
+  StreamSubscription<List<int>>? _proximityValueSub;
 
   Future<void> _init() async {
     await _ensureBluetoothPermissions();
@@ -135,7 +140,7 @@ class DeviceConnection extends ChangeNotifier {
 
     // 필터는 OR 조건이라 서비스 UUID나 이름 중 하나만 맞아도 결과로 들어온다.
     await FlutterBluePlus.startScan(
-      withServices: [BleProtocol.eyeService],
+      withServices: [BleProtocol.proximityService],
       withNames: [BleProtocol.deviceName],
       timeout: _scanTimeout,
     );
@@ -158,6 +163,20 @@ class DeviceConnection extends ChangeNotifier {
       }
     });
 
+    final services = await device.discoverServices();
+    final proximityChar = _findChar(
+      services,
+      BleProtocol.proximityService,
+      BleProtocol.proximityChar,
+    );
+    if (proximityChar != null) {
+      _proximityValueSub = proximityChar.onValueReceived.listen((bytes) {
+        final sample = ProximitySample.parse(bytes);
+        if (sample != null) _proximityController.add(sample.value);
+      });
+      await proximityChar.setNotifyValue(true);
+    }
+
     // 연결 과정 중 기기가 끊겼다면 connectionState 리스너가 이미 정리했다.
     if (_device != device) throw StateError('disconnected during setup');
 
@@ -165,6 +184,20 @@ class DeviceConnection extends ChangeNotifier {
         ? '${device.platformName} (${device.remoteId.str})'
         : device.remoteId.str;
     _setStatus(ConnectionStatus.deviceConnected);
+  }
+
+  BluetoothCharacteristic? _findChar(
+    List<BluetoothService> services,
+    Guid serviceUuid,
+    Guid charUuid,
+  ) {
+    for (final service in services) {
+      if (service.uuid != serviceUuid) continue;
+      for (final c in service.characteristics) {
+        if (c.uuid == charUuid) return c;
+      }
+    }
+    return null;
   }
 
   void _fail(String message) {
@@ -175,6 +208,8 @@ class DeviceConnection extends ChangeNotifier {
   }
 
   void _clearDevice() {
+    _proximityValueSub?.cancel();
+    _proximityValueSub = null;
     _deviceStateSub?.cancel();
     _deviceStateSub = null;
     _device = null;
@@ -193,6 +228,7 @@ class DeviceConnection extends ChangeNotifier {
   void dispose() {
     _adapterStateSub?.cancel();
     _clearDevice();
+    _proximityController.close();
     super.dispose();
   }
 }

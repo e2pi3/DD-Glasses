@@ -14,9 +14,11 @@ class BleProtocol {
   /// 눈 상태 characteristic (read / notify). 페이로드 형식은 [EyeState.parse] 참고.
   static final Guid eyeStateChar = Guid('8e7f0002-6c1b-4d3a-9f2e-3dd6a5e0b001');
 
-  /// 표준 Battery Service / Battery Level (uint8, 0~100 %).
-  static final Guid batteryService = Guid('180F');
-  static final Guid batteryLevelChar = Guid('2A19');
+  /// IR 근접센서(VCNL4040) 서비스 (커스텀).
+  static final Guid proximityService = Guid('8e7f0003-6c1b-4d3a-9f2e-3dd6a5e0b001');
+
+  /// proximity characteristic (read / notify). 페이로드 형식은 [ProximitySample.parse] 참고.
+  static final Guid proximityChar = Guid('8e7f0004-6c1b-4d3a-9f2e-3dd6a5e0b001');
 }
 
 /// 기기가 추론 1회마다 보내는 눈 상태.
@@ -39,5 +41,18 @@ class EyeState {
       closedProbability: bytes[1] / 100,
       openProbability: bytes[2] / 100,
     );
+  }
+}
+
+/// 기기가 500ms 주기로 보내는 VCNL4040 IR 근접센서 원시값(raw count).
+class ProximitySample {
+  const ProximitySample(this.value);
+
+  final int value;
+
+  /// 페이로드: uint16 (little-endian).
+  static ProximitySample? parse(List<int> bytes) {
+    if (bytes.length < 2) return null;
+    return ProximitySample(bytes[0] | (bytes[1] << 8));
   }
 }

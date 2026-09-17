@@ -3,11 +3,12 @@ import 'package:flutter/material.dart';
 import '../connect.dart';
 import '../theme.dart';
 import '../widget.dart';
+import 'log_screen.dart';
 
 /// 설정 화면.
 /// 기기 연결 정보는 별도의 카드로 상단에 항상 표시하고, 그 아래로 설정 항목들을
 /// 모아놓은 카드를 배치한다. 기기가 연결된 상태일 때만 설정 카드 안에
-/// 기기 연결 해제 / 피드백 강도 조절 / 경고음 음량 설정 항목을 얇은 구분선으로 나눠 보여준다.
+/// 로그 / 기기 연결 해제 / 피드백 강도 조절 / 경고음 음량 설정 항목을 얇은 구분선으로 나눠 보여준다.
 class SettingScreen extends StatelessWidget {
   const SettingScreen({super.key});
 
@@ -35,6 +36,14 @@ class SettingScreen extends StatelessWidget {
               AppCard(
                 child: Column(
                   children: [
+                    _SettingTile(
+                      icon: Icons.list_alt_rounded,
+                      title: '로그',
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const LogScreen()),
+                      ),
+                    ),
+                    _thinDivider,
                     _SettingTile(
                       icon: Icons.bluetooth_disabled_rounded,
                       title: '기기 연결 해제',
