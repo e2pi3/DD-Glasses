@@ -7,6 +7,21 @@
 #include "tensorflow/lite/micro/all_ops_resolver.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
+// ===== BLE GATT 규약 (APP/lib/ble_protocol.dart 와 반드시 동일하게 유지) =====
+#define BLE_DEVICE_NAME          "DD-GLASSES"
+#define EYE_SERVICE_UUID         "8e7f0001-6c1b-4d3a-9f2e-3dd6a5e0b001"
+#define EYE_STATE_CHAR_UUID      "8e7f0002-6c1b-4d3a-9f2e-3dd6a5e0b001"
+#define BATTERY_SERVICE_UUID     BLEUUID((uint16_t)0x180F)
+#define BATTERY_LEVEL_CHAR_UUID  BLEUUID((uint16_t)0x2A19)
+
+#define INFERENCE_INTERVAL_MS    500     // 추론(+BLE 전송) 주기
+#define BATTERY_INTERVAL_MS      30000   // 배터리 잔량 전송 주기
+
 // ===== XIAO ESP32S3 Sense 카메라 핀 =====
 #define PWDN_GPIO_NUM     -1
 #define RESET_GPIO_NUM    -1
@@ -55,6 +70,90 @@ TfLiteTensor* output_tensor = nullptr;
 // 인터프리터 초기화 시 "Didn't find op XXX" 에러가 나면 여기에 해당 Add함수를 추가해야 함
 tflite::AllOpsResolver resolver;
 
+
+// ===== BLE 관련 전역 변수 =====
+BLECharacteristic* eye_state_char = nullptr;
+BLECharacteristic* battery_char = nullptr;
+bool ble_connected = false;
+uint8_t last_battery = 0xFF;
+unsigned long last_battery_ms = 0;
+
+class GlassesServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer* server) override {
+    ble_connected = true;
+    Serial.println("BLE 연결됨");
+  }
+  void onDisconnect(BLEServer* server) override {
+    ble_connected = false;
+    Serial.println("BLE 연결 해제됨 -> 다시 광고 시작");
+    BLEDevice::startAdvertising();
+  }
+};
+
+// TODO(battery): XIAO ESP32S3는 배터리 전압 측정 회로가 기본 내장되어 있지 않다.
+// 배터리 단자 -> 분압 저항 -> ADC 핀을 연결한 뒤 analogReadMilliVolts()로 측정해
+// 퍼센트로 환산하도록 교체할 것. 지금은 100으로 고정.
+uint8_t read_battery_percent() {
+  return 100;
+}
+
+// ---------- BLE GATT 서버 초기화 ----------
+void setup_ble() {
+  BLEDevice::init(BLE_DEVICE_NAME);
+  BLEServer* server = BLEDevice::createServer();
+  server->setCallbacks(new GlassesServerCallbacks());
+
+  // 눈 상태 서비스: [0] 판정(0=뜸,1=감음) [1] 감음 확률 % [2] 뜸 확률 %
+  BLEService* eye_service = server->createService(EYE_SERVICE_UUID);
+  eye_state_char = eye_service->createCharacteristic(
+      EYE_STATE_CHAR_UUID,
+      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+  eye_state_char->addDescriptor(new BLE2902());
+  uint8_t initial_eye[3] = {0, 0, 0};
+  eye_state_char->setValue(initial_eye, sizeof(initial_eye));
+  eye_service->start();
+
+  // 표준 배터리 서비스
+  BLEService* battery_service = server->createService(BATTERY_SERVICE_UUID);
+  battery_char = battery_service->createCharacteristic(
+      BATTERY_LEVEL_CHAR_UUID,
+      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+  battery_char->addDescriptor(new BLE2902());
+  last_battery = read_battery_percent();
+  battery_char->setValue(&last_battery, 1);
+  battery_service->start();
+
+  BLEAdvertising* advertising = BLEDevice::getAdvertising();
+  advertising->addServiceUUID(EYE_SERVICE_UUID);
+  advertising->setScanResponse(true);  // 이름은 scan response 로 전송
+  BLEDevice::startAdvertising();
+
+  Serial.println("BLE 광고 시작: " BLE_DEVICE_NAME);
+}
+
+// ---------- 추론 결과 BLE 전송 ----------
+void publish_eye_state(float closed_prob, float open_prob) {
+  if (eye_state_char == nullptr) return;
+  uint8_t payload[3] = {
+      (uint8_t)(closed_prob > open_prob ? 1 : 0),
+      (uint8_t)constrain((int)round(closed_prob * 100), 0, 100),
+      (uint8_t)constrain((int)round(open_prob * 100), 0, 100),
+  };
+  eye_state_char->setValue(payload, sizeof(payload));
+  if (ble_connected) eye_state_char->notify();
+}
+
+void publish_battery_if_due() {
+  unsigned long now = millis();
+  if (now - last_battery_ms < BATTERY_INTERVAL_MS) return;
+  last_battery_ms = now;
+
+  uint8_t level = read_battery_percent();
+  if (level == last_battery) return;
+  last_battery = level;
+  battery_char->setValue(&last_battery, 1);
+  if (ble_connected) battery_char->notify();
+}
 
 // ---------- RGB565 회전(시계방향 90도) + 정사각형 크롭 ----------
 // 원본 아랫부분(세로 240을 넘는 가로 여유분)은 애초에 계산 안 해서 자동으로 버려짐
@@ -171,13 +270,16 @@ void setup() {
 
   setup_camera();
   setup_model();
+  setup_ble();
 }
 
 void loop() {
   camera_fb_t *fb = esp_camera_fb_get();
+  publish_battery_if_due();
+
   if (!fb) {
     Serial.println("촬영 실패");
-    delay(5000);
+    delay(INFERENCE_INTERVAL_MS);
     return;
   }
 
@@ -192,7 +294,7 @@ void loop() {
   TfLiteStatus invoke_status = interpreter->Invoke();
   if (invoke_status != kTfLiteOk) {
     Serial.println("추론 실패");
-    delay(5000);
+    delay(INFERENCE_INTERVAL_MS);
     return;
   }
 
@@ -209,5 +311,7 @@ void loop() {
   Serial.print(" -> 판정: ");
   Serial.println(closed_prob > open_prob ? "감음" : "뜸");
 
-  delay(5000);
+  publish_eye_state(closed_prob, open_prob);
+
+  delay(INFERENCE_INTERVAL_MS);
 }

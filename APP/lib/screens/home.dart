@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../ble_protocol.dart';
 import '../connect.dart';
 import '../device.dart';
 import '../theme.dart';
@@ -28,8 +29,16 @@ class HomeScreen extends StatelessWidget {
               ),
               child: switch (connection.status) {
                 ConnectionStatus.bluetoothOff => const _BluetoothOffView(),
-                ConnectionStatus.bluetoothOn =>
-                  const _DeviceDisconnectedView(),
+                ConnectionStatus.bluetoothOn => _DeviceDisconnectedView(
+                  errorMessage: connection.errorMessage,
+                  onConnect: connection.connectToGlasses,
+                ),
+                ConnectionStatus.scanning => const _ProgressView(
+                  message: '기기를 찾는 중...',
+                ),
+                ConnectionStatus.connecting => const _ProgressView(
+                  message: '기기에 연결하는 중...',
+                ),
                 ConnectionStatus.deviceConnected => _DeviceInfoView(
                   deviceId: connection.deviceId,
                 ),
@@ -63,7 +72,13 @@ class _BluetoothOffView extends StatelessWidget {
 }
 
 class _DeviceDisconnectedView extends StatelessWidget {
-  const _DeviceDisconnectedView();
+  const _DeviceDisconnectedView({
+    required this.errorMessage,
+    required this.onConnect,
+  });
+
+  final String? errorMessage;
+  final VoidCallback onConnect;
 
   @override
   Widget build(BuildContext context) {
@@ -77,13 +92,53 @@ class _DeviceDisconnectedView extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         Text('기기를 연결해주세요', style: Theme.of(context).textTheme.titleMedium),
+        if (errorMessage != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            errorMessage!,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.error,
+            ),
+          ),
+        ],
+        const SizedBox(height: 24),
+        FilledButton.icon(
+          onPressed: onConnect,
+          icon: const Icon(Icons.bluetooth_rounded),
+          label: Text(errorMessage == null ? '기기 연결' : '다시 시도'),
+        ),
       ],
     );
   }
 }
 
-// TODO(bluetooth): 졸음 감지 신호 등 실제 데이터를 받아와 표시하는 화면으로
-// 채운다. 지금은 기기 ID / 배터리 / 러닝타임만 보여주는 자리 표시 상태.
+class _ProgressView extends StatelessWidget {
+  const _ProgressView({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(
+          width: 64,
+          height: 64,
+          child: Padding(
+            padding: EdgeInsets.all(8),
+            child: CircularProgressIndicator(strokeWidth: 4),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text(message, style: Theme.of(context).textTheme.titleMedium),
+      ],
+    );
+  }
+}
+
+/// 연결된 기기의 실시간 눈 상태와 배터리 / 러닝타임을 보여준다.
 class _DeviceInfoView extends StatelessWidget {
   const _DeviceInfoView({required this.deviceId});
 
@@ -107,7 +162,9 @@ class _DeviceInfoView extends StatelessWidget {
           const SizedBox(height: 4),
           Text(deviceId!, style: Theme.of(context).textTheme.bodySmall),
         ],
-        const SizedBox(height: 16),
+        const SizedBox(height: 20),
+        _EyeStateBadge(eyeState: deviceInfo.eyeState),
+        const SizedBox(height: 20),
         SizedBox(
           width: 220,
           child: Row(
@@ -116,7 +173,9 @@ class _DeviceInfoView extends StatelessWidget {
                 child: Center(
                   child: _InfoStat(
                     icon: Icons.battery_full_rounded,
-                    label: '${deviceInfo.batteryLevel}%',
+                    label: deviceInfo.batteryLevel == null
+                        ? '--%'
+                        : '${deviceInfo.batteryLevel}%',
                     iconColor: _batteryColor(deviceInfo.batteryLevel),
                   ),
                 ),
@@ -148,10 +207,70 @@ class _DeviceInfoView extends StatelessWidget {
     return '$hours:$minutes:$seconds';
   }
 
-  static Color _batteryColor(int level) {
+  static Color _batteryColor(int? level) {
+    if (level == null) return AppColors.textSecondary;
     if (level <= 10) return const Color(0xFFFF3B30);
     if (level < 30) return const Color(0xFFFF9500);
     return const Color(0xFF34C759);
+  }
+}
+
+/// 기기가 보낸 가장 최근 추론 결과(눈 뜸/감음)를 표시하는 배지.
+class _EyeStateBadge extends StatelessWidget {
+  const _EyeStateBadge({required this.eyeState});
+
+  final EyeState? eyeState;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = eyeState;
+    final (IconData icon, String label, Color color) = switch (state) {
+      null => (
+        Icons.hourglass_empty_rounded,
+        '데이터 수신 대기 중',
+        AppColors.textSecondary,
+      ),
+      EyeState(closed: true) => (
+        Icons.visibility_off_rounded,
+        '눈 감음',
+        const Color(0xFFFF3B30),
+      ),
+      EyeState(closed: false) => (
+        Icons.visibility_rounded,
+        '눈 뜸',
+        const Color(0xFF34C759),
+      ),
+    };
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: color,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (state != null) ...[
+            const SizedBox(width: 6),
+            Text(
+              '${(state.closedProbability * 100).round()}%',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }
 
