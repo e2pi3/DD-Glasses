@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../ble_protocol.dart';
 import '../connect.dart';
 import '../theme.dart';
 import '../widget.dart';
@@ -64,13 +65,29 @@ class SettingScreen extends StatelessWidget {
                     _SettingTile(
                       icon: Icons.tune_rounded,
                       title: '피드백 강도 조절',
-                      onTap: () {},
+                      value: connection.settings?.vibration,
+                      onTap: () => _showLevelSheet(
+                        context,
+                        title: '진동 세기',
+                        icon: Icons.vibration_rounded,
+                        previewType: PreviewType.vibration,
+                        read: (s) => s.vibration,
+                        write: (s, v) => s.copyWith(vibration: v),
+                      ),
                     ),
                     _thinDivider,
                     _SettingTile(
                       icon: Icons.volume_up_rounded,
                       title: '경고음 음량 설정',
-                      onTap: () {},
+                      value: connection.settings?.volume,
+                      onTap: () => _showLevelSheet(
+                        context,
+                        title: '경고음 음량',
+                        icon: Icons.volume_up_rounded,
+                        previewType: PreviewType.sound,
+                        read: (s) => s.volume,
+                        write: (s, v) => s.copyWith(volume: v),
+                      ),
                     ),
                   ],
                 ),
@@ -79,6 +96,112 @@ class SettingScreen extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// 1~5단계 슬라이더 시트를 띄운다. 값은 기기에서 읽어온 [DeviceConnection.settings]가 원본이고,
+/// 슬라이더를 놓는 순간 기기에 쓰고 그 단계로 잠깐 울리거나 진동시켜 확인할 수 있게 한다.
+void _showLevelSheet(
+  BuildContext context, {
+  required String title,
+  required IconData icon,
+  required PreviewType previewType,
+  required int Function(DeviceSettings) read,
+  required DeviceSettings Function(DeviceSettings, int) write,
+}) {
+  showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: AppColors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (_) => _LevelSheet(
+      title: title,
+      icon: icon,
+      previewType: previewType,
+      read: read,
+      write: write,
+    ),
+  );
+}
+
+class _LevelSheet extends StatefulWidget {
+  const _LevelSheet({
+    required this.title,
+    required this.icon,
+    required this.previewType,
+    required this.read,
+    required this.write,
+  });
+
+  final String title;
+  final IconData icon;
+  final PreviewType previewType;
+  final int Function(DeviceSettings) read;
+  final DeviceSettings Function(DeviceSettings, int) write;
+
+  @override
+  State<_LevelSheet> createState() => _LevelSheetState();
+}
+
+class _LevelSheetState extends State<_LevelSheet> {
+  final _connection = DeviceConnection.instance;
+  int? _dragLevel;
+
+  int get _level =>
+      _dragLevel ??
+      (_connection.settings == null
+          ? SettingLevel.defaultLevel
+          : widget.read(_connection.settings!));
+
+  Future<void> _commit(int level) async {
+    final current = _connection.settings;
+    if (current == null) return;
+    await _connection.updateSettings(widget.write(current, level));
+    await _connection.previewSetting(widget.previewType, level);
+    if (mounted) setState(() => _dragLevel = null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final level = _level;
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(widget.icon, color: AppColors.textSecondary),
+                const SizedBox(width: 12),
+                Expanded(child: Text(widget.title, style: textTheme.titleMedium)),
+                Text('$level / ${SettingLevel.max}', style: textTheme.titleMedium),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Slider(
+              value: level.toDouble(),
+              min: SettingLevel.min.toDouble(),
+              max: SettingLevel.max.toDouble(),
+              divisions: SettingLevel.max - SettingLevel.min,
+              label: '$level',
+              onChanged: _connection.settings == null
+                  ? null
+                  : (v) => setState(() => _dragLevel = v.round()),
+              onChangeEnd: (v) => _commit(v.round()),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '슬라이더를 놓으면 기기에서 바로 확인할 수 있어요',
+              style: textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -140,11 +263,15 @@ class _SettingTile extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.onTap,
+    this.value,
   });
 
   final IconData icon;
   final String title;
   final VoidCallback onTap;
+
+  /// 현재 설정 단계. 있으면 오른쪽에 `n/5`로 표시한다.
+  final int? value;
 
   @override
   Widget build(BuildContext context) {
@@ -159,6 +286,13 @@ class _SettingTile extends StatelessWidget {
             Expanded(
               child: Text(title, style: Theme.of(context).textTheme.bodyMedium),
             ),
+            if (value != null) ...[
+              Text(
+                '$value/${SettingLevel.max}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(width: 4),
+            ],
             const Icon(
               Icons.chevron_right_rounded,
               color: AppColors.textSecondary,

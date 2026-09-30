@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'screens/home.dart';
 import 'screens/setting.dart';
 import 'screens/statistics.dart';
+import 'sensor_log.dart';
 import 'theme.dart';
 
 const List<String> _kTabTitles = ['통계', '홈', '설정'];
@@ -18,6 +19,8 @@ void main() {
       systemNavigationBarDividerColor: Colors.transparent,
     ),
   );
+  // 로그 화면을 열기 전에도 기기 값이 쌓이도록 앱 시작 시 미리 구독한다.
+  SensorLog.instance;
   runApp(const MyApp());
 }
 

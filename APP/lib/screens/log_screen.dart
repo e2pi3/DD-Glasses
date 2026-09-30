@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../sensor_log.dart';
 import '../theme.dart';
 
-/// 기기가 보내는 IR 근접센서(proximity) 원시값을 실시간으로 보여주는 화면.
+/// 기기가 500ms 마다 보내는 눈 추론 / IR 근접 / IMU 값을 실시간으로 보여주는 화면.
 class LogScreen extends StatelessWidget {
   const LogScreen({super.key});
 
@@ -12,9 +12,9 @@ class LogScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('로그')),
       body: ListenableBuilder(
-        listenable: ProximityLog.instance,
+        listenable: SensorLog.instance,
         builder: (context, _) {
-          final entries = ProximityLog.instance.entries;
+          final entries = SensorLog.instance.entries;
           if (entries.isEmpty) {
             return Center(
               child: Text(
@@ -34,7 +34,7 @@ class LogScreen extends StatelessWidget {
               final entry = entries[index];
               return ListTile(
                 dense: true,
-                title: Text('proximity: ${entry.value}'),
+                title: Text(entry.summary),
                 trailing: Text(
                   _formatTime(entry.timestamp),
                   style: Theme.of(context).textTheme.bodySmall,

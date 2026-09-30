@@ -39,6 +39,7 @@ class HomeScreen extends StatelessWidget {
                 ),
                 ConnectionStatus.deviceConnected => _DeviceInfoView(
                   deviceId: connection.deviceId,
+                  worn: connection.isWorn,
                 ),
               },
             ),
@@ -136,11 +137,12 @@ class _ProgressView extends StatelessWidget {
   }
 }
 
-/// 기기가 연결되었음을 보여준다. 눈 상태/배터리/러닝타임 등은 다음 단계에서 추가한다.
+/// 기기가 연결되었음과 착용 여부를 보여준다. 눈 상태/배터리/러닝타임 등은 다음 단계에서 추가한다.
 class _DeviceInfoView extends StatelessWidget {
-  const _DeviceInfoView({required this.deviceId});
+  const _DeviceInfoView({required this.deviceId, required this.worn});
 
   final String? deviceId;
+  final bool worn;
 
   @override
   Widget build(BuildContext context) {
@@ -158,6 +160,24 @@ class _DeviceInfoView extends StatelessWidget {
           const SizedBox(height: 4),
           Text(deviceId!, style: Theme.of(context).textTheme.bodySmall),
         ],
+        const SizedBox(height: 16),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              worn ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+              size: 20,
+              color: worn ? AppColors.primary : AppColors.textSecondary,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              worn ? '착용 중' : '미착용',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: worn ? AppColors.primary : AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
       ],
     );
   }

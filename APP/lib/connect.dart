@@ -20,8 +20,8 @@ enum ConnectionStatus {
 ///
 /// 폰의 블루투스 어댑터 on/off는 [FlutterBluePlus.adapterState] 스트림을 구독해
 /// 자동으로 반영하고, [connectToGlasses]로 DD-GLASSES를 스캔 → GATT 연결 →
-/// proximity characteristic 구독까지 수행한다. 기기가 보내는 값은 [proximitySamples]
-/// 스트림으로 내보내며 ProximityLog(sensor_log.dart)가 이를 받아 보관한다.
+/// telemetry 구독 + 기기 설정 읽기까지 수행한다. 기기가 보내는 값은 [sensorFrames]
+/// 스트림으로 내보내며 SensorLog(sensor_log.dart)가 이를 받아 보관한다.
 class DeviceConnection extends ChangeNotifier {
   DeviceConnection._() {
     _init();
@@ -43,13 +43,23 @@ class DeviceConnection extends ChangeNotifier {
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
 
-  final _proximityController = StreamController<int>.broadcast();
-  Stream<int> get proximitySamples => _proximityController.stream;
+  final _frameController = StreamController<SensorFrame>.broadcast();
+  Stream<SensorFrame> get sensorFrames => _frameController.stream;
+
+  /// 기기가 보고한 착용 상태. 연결이 끊기면 false.
+  bool _worn = false;
+  bool get isWorn => _worn;
+
+  /// 기기에 저장된 설정. 연결할 때 기기에서 읽어오며, 연결이 끊기면 null.
+  DeviceSettings? _settings;
+  DeviceSettings? get settings => _settings;
 
   BluetoothDevice? _device;
+  BluetoothCharacteristic? _settingsChar;
+  BluetoothCharacteristic? _previewChar;
   StreamSubscription<BluetoothAdapterState>? _adapterStateSub;
   StreamSubscription<BluetoothConnectionState>? _deviceStateSub;
-  StreamSubscription<List<int>>? _proximityValueSub;
+  StreamSubscription<List<int>>? _telemetryValueSub;
 
   Future<void> _init() async {
     await _ensureBluetoothPermissions();
@@ -140,7 +150,7 @@ class DeviceConnection extends ChangeNotifier {
 
     // 필터는 OR 조건이라 서비스 UUID나 이름 중 하나만 맞아도 결과로 들어온다.
     await FlutterBluePlus.startScan(
-      withServices: [BleProtocol.proximityService],
+      withServices: [BleProtocol.telemetryService],
       withNames: [BleProtocol.deviceName],
       timeout: _scanTimeout,
     );
@@ -164,17 +174,38 @@ class DeviceConnection extends ChangeNotifier {
     });
 
     final services = await device.discoverServices();
-    final proximityChar = _findChar(
+    final telemetryChar = _findChar(
       services,
-      BleProtocol.proximityService,
-      BleProtocol.proximityChar,
+      BleProtocol.telemetryService,
+      BleProtocol.telemetryChar,
     );
-    if (proximityChar != null) {
-      _proximityValueSub = proximityChar.onValueReceived.listen((bytes) {
-        final sample = ProximitySample.parse(bytes);
-        if (sample != null) _proximityController.add(sample.value);
+    if (telemetryChar != null) {
+      _telemetryValueSub = telemetryChar.onValueReceived.listen((bytes) {
+        final frame = SensorFrame.parse(bytes);
+        if (frame == null) return;
+        _frameController.add(frame);
+        if (frame.worn != _worn) {
+          _worn = frame.worn;
+          notifyListeners();
+        }
       });
-      await proximityChar.setNotifyValue(true);
+      await telemetryChar.setNotifyValue(true);
+    }
+
+    // 설정의 원본은 기기에 있으므로 연결 직후 읽어서 설정 화면에 그대로 보여준다.
+    _settingsChar = _findChar(
+      services,
+      BleProtocol.settingsService,
+      BleProtocol.settingsChar,
+    );
+    _previewChar = _findChar(
+      services,
+      BleProtocol.settingsService,
+      BleProtocol.previewChar,
+    );
+    final settingsChar = _settingsChar;
+    if (settingsChar != null) {
+      _settings = DeviceSettings.parse(await settingsChar.read());
     }
 
     // 연결 과정 중 기기가 끊겼다면 connectionState 리스너가 이미 정리했다.
@@ -207,12 +238,45 @@ class DeviceConnection extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 음량/진동 설정을 기기에 쓴다. 기기가 NVS 에 저장하므로 앱은 따로 저장하지 않는다.
+  /// 화면에는 바로 반영하고(낙관적 갱신), 쓰기가 실패하면 기기 값을 다시 읽어 되돌린다.
+  Future<void> updateSettings(DeviceSettings next) async {
+    final char = _settingsChar;
+    if (char == null || !isConnected) return;
+    _settings = next;
+    notifyListeners();
+    try {
+      await char.write(next.toBytes());
+    } catch (e) {
+      debugPrint('BLE settings write error: $e');
+      try {
+        _settings = DeviceSettings.parse(await char.read());
+      } catch (_) {}
+      notifyListeners();
+    }
+  }
+
+  /// 기기가 [level] 단계로 잠깐 울리거나 진동하게 해서 설정을 확인할 수 있게 한다.
+  Future<void> previewSetting(PreviewType type, int level) async {
+    final char = _previewChar;
+    if (char == null || !isConnected) return;
+    try {
+      await char.write([type.index, level]);
+    } catch (e) {
+      debugPrint('BLE preview write error: $e');
+    }
+  }
+
   void _clearDevice() {
-    _proximityValueSub?.cancel();
-    _proximityValueSub = null;
+    _telemetryValueSub?.cancel();
+    _telemetryValueSub = null;
     _deviceStateSub?.cancel();
     _deviceStateSub = null;
     _device = null;
+    _settingsChar = null;
+    _previewChar = null;
+    _settings = null;
+    _worn = false;
     _deviceId = null;
   }
 
@@ -228,7 +292,7 @@ class DeviceConnection extends ChangeNotifier {
   void dispose() {
     _adapterStateSub?.cancel();
     _clearDevice();
-    _proximityController.close();
+    _frameController.close();
     super.dispose();
   }
 }
