@@ -143,10 +143,7 @@ void main() {
     });
 
     test('세션이 지워지면 그 세션의 감지도 함께 지워진다', () async {
-      await writeRecords([
-        (id: 1, at: day(30)),
-        (id: 2, at: day(0)),
-      ]);
+      await writeRecords([(id: 1, at: day(30)), (id: 2, at: day(0))]);
 
       final cache = open();
       await cache.load();
@@ -157,10 +154,7 @@ void main() {
     });
 
     test('지워진 기록은 파일에도 남지 않는다', () async {
-      await writeRecords([
-        (id: 1, at: day(30)),
-        (id: 2, at: day(0)),
-      ]);
+      await writeRecords([(id: 1, at: day(30)), (id: 2, at: day(0))]);
 
       final cache = open();
       await cache.load();

@@ -9,13 +9,19 @@ class BleProtocol {
   static const String deviceName = 'DD-GLASSES';
 
   /// 센서/추론 결과 서비스. 광고 패킷에도 실려서 스캔 필터로 쓴다.
-  static final Guid telemetryService = Guid('8e7f0001-6c1b-4d3a-9f2e-3dd6a5e0b001');
+  static final Guid telemetryService = Guid(
+    '8e7f0001-6c1b-4d3a-9f2e-3dd6a5e0b001',
+  );
 
   /// 500ms 마다 기기가 notify 하는 [SensorFrame].
-  static final Guid telemetryChar = Guid('8e7f0002-6c1b-4d3a-9f2e-3dd6a5e0b001');
+  static final Guid telemetryChar = Guid(
+    '8e7f0002-6c1b-4d3a-9f2e-3dd6a5e0b001',
+  );
 
   /// 설정 서비스.
-  static final Guid settingsService = Guid('8e7f0003-6c1b-4d3a-9f2e-3dd6a5e0b001');
+  static final Guid settingsService = Guid(
+    '8e7f0003-6c1b-4d3a-9f2e-3dd6a5e0b001',
+  );
 
   /// 설정 characteristic (read / write). 페이로드는 [DeviceSettings] 참고.
   /// 설정의 원본은 기기(NVS)이므로 앱은 연결할 때마다 이 값을 읽어 온다.
@@ -43,9 +49,9 @@ class DeviceSettings {
   final int vibration;
 
   DeviceSettings copyWith({int? volume, int? vibration}) => DeviceSettings(
-        volume: volume ?? this.volume,
-        vibration: vibration ?? this.vibration,
-      );
+    volume: volume ?? this.volume,
+    vibration: vibration ?? this.vibration,
+  );
 
   static DeviceSettings? parse(List<int> bytes) {
     if (bytes.length < 2) return null;
@@ -60,7 +66,8 @@ enum PreviewType { sound, vibration }
 
 /// 기기가 500ms 주기로 보내는 센서/추론 한 프레임 (16바이트).
 ///
-///  [0]    flags  bit0=눈 유효, bit1=눈 감김, bit2=근접 유효, bit3=IMU 유효, bit4=착용 중
+///  [0]    flags  bit0=눈 유효, bit1=눈 감김, bit2=근접 유효, bit3=IMU 유효, bit4=착용 중,
+///                bit5=졸음 경고 중, bit6=직전에 버튼 반응
 ///  [1]    감음 확률 % (0~100)
 ///  [2:4]  근접 raw uint16 LE
 ///  [4:16] IMU int16 LE x6 : acc xyz (0.01 m/s²), gyro xyz (mrad/s)
@@ -74,6 +81,8 @@ class SensorFrame {
     required this.accel,
     required this.gyro,
     required this.worn,
+    required this.alerting,
+    required this.buttonReacted,
   });
 
   /// 눈 추론이 유효할 때만 값이 있다.
@@ -91,6 +100,12 @@ class SensorFrame {
 
   /// 기기가 근접센서로 착용을 확정했는지. 착용 전에는 카메라가 휴면이라 눈 값이 없다.
   final bool worn;
+
+  /// 기기가 지금 졸음 경고를 울리고 있는지. 졸음 판정은 기기가 하므로 앱은 이 값을 그대로 쓴다.
+  final bool alerting;
+
+  /// 직전 구간에 사용자가 버튼을 눌러 경고에 반응했는지. 한 프레임 동안만 true 다.
+  final bool buttonReacted;
 
   static const int length = 16;
 
@@ -113,6 +128,8 @@ class SensorFrame {
       accel: imuOk ? [for (var k = 0; k < 3; k++) i16(4 + k * 2) / 100] : null,
       worn: flags & 16 != 0,
       gyro: imuOk ? [for (var k = 3; k < 6; k++) i16(4 + k * 2) / 1000] : null,
+      alerting: flags & 32 != 0,
+      buttonReacted: flags & 64 != 0,
     );
   }
 }

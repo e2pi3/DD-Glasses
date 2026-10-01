@@ -2,17 +2,18 @@ import 'dart:async';
 
 import 'ble_protocol.dart';
 import 'connect.dart';
-import 'drowsiness_detector.dart';
+import 'eye_stats.dart';
 import 'session.dart';
 import 'session_cache.dart';
 
 /// 기기가 500ms 마다 보내는 로그 프레임을 착용 세션 / 졸음 감지 기록으로 바꿔
 /// [SessionCache]에 쌓는다. 앱 시작 시 [start]를 한 번 호출하면 된다.
 ///
-/// 착용 여부는 프레임의 `worn`(기기가 근접센서로 확정한 값)을 그대로 쓰고,
-/// 졸음 판정은 [DrowsinessDetector]에 맡긴다.
-/// TODO(telemetry): 펌웨어가 경고 상태 비트를 보내주면 따라 계산하는 대신
-/// 그 값을 그대로 쓴다. 버튼으로 경고를 끈 경우까지 기기와 정확히 일치하게 된다.
+/// 착용 여부와 졸음 판정은 모두 기기가 보낸 값을 그대로 쓴다. 착용은 프레임의
+/// `worn`(근접센서로 확정한 값), 감지는 `alerting`(경고 중)이 꺼짐에서 켜짐으로
+/// 바뀌는 순간이다. 앱이 같은 규칙으로 다시 세면 프레임이 유실되거나 버튼으로 경고를
+/// 끈 구간에서 기기와 횟수가 어긋나므로, 판정은 기기 쪽에만 둔다.
+/// [EyeStats]는 감지 1건의 판정 근거(눈 감김 시간, PERCLOS)를 내는 데만 쓴다.
 class SessionRecorder {
   SessionRecorder._();
 
@@ -27,7 +28,7 @@ class SessionRecorder {
 
   final DeviceConnection _connection = DeviceConnection.instance;
   final SessionCache _cache = SessionCache.instance;
-  final DrowsinessDetector _detector = DrowsinessDetector();
+  final EyeStats _eyeStats = EyeStats();
 
   bool _started = false;
   StreamSubscription<SensorFrame>? _frameSub;
@@ -36,6 +37,9 @@ class SessionRecorder {
   int? _sessionId;
   DateTime? _lastFrameAt;
   DateTime? _lastExtendAt;
+
+  /// 직전 프레임에서 기기가 경고 중이었는지. 꺼짐 -> 켜짐으로 바뀌면 감지 1건이다.
+  bool _wasAlerting = false;
 
   Future<void> start() async {
     if (_started) return;
@@ -80,14 +84,18 @@ class SessionRecorder {
   }
 
   void _updateDrowsiness(SensorFrame frame, DateTime now, int sessionId) {
-    final hit = _detector.add(at: now, eyeClosed: frame.eyeClosed);
-    if (hit == null) return;
+    _eyeStats.add(at: now, eyeClosed: frame.eyeClosed);
+
+    final started = frame.alerting && !_wasAlerting;
+    _wasAlerting = frame.alerting;
+    if (!started) return;
+
     _cache.addDetection(
       DetectionEvent(
         sessionId: sessionId,
-        occurredAt: hit.at,
-        perclos: hit.perclos,
-        maxClosedSeconds: hit.closedSeconds,
+        occurredAt: now,
+        perclos: _eyeStats.perclos,
+        maxClosedSeconds: _eyeStats.closedSeconds,
       ),
     );
   }
@@ -99,7 +107,8 @@ class SessionRecorder {
     if (lastFrameAt != null) _cache.extendSession(sessionId, lastFrameAt);
     _sessionId = null;
     _lastExtendAt = null;
-    _detector.reset();
+    _wasAlerting = false;
+    _eyeStats.reset();
     // 착용이 끝난 시점의 기록은 바로 파일에 남긴다.
     _cache.flush();
   }

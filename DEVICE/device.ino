@@ -96,6 +96,10 @@ static uint32_t openStreak   = 0;
 static bool     alertActive  = false;
 static uint32_t alertStart   = 0;
 static uint32_t resumeAt     = 0;
+// 버튼 반응은 500ms 주기와 무관하게 매 루프에서 처리하므로, 눌린 사실을 여기에 기억해두고
+// 다음 텔레메트리에 실어 보낸 뒤 지운다. 그 순간의 버튼 상태만 보내면 프레임 사이에
+// 눌렀다 뗀 반응을 앱이 놓친다.
+static bool     buttonReacted = false;
 
 // 앱의 설정 화면에서 값을 바꿀 때 바로 확인할 수 있게 잠깐 울리는 미리보기
 constexpr uint32_t PREVIEW_MS = 700;
@@ -373,15 +377,21 @@ void refreshSettingsValue() {
 }
 
 // 텔레메트리 프레임 (16바이트, 기본 MTU 23 에서도 한 패킷) — 앱 ble_protocol.dart 의 SensorFrame.parse 참고
-//  [0]    flags  bit0=눈 유효, bit1=눈 감김, bit2=근접 유효, bit3=IMU 유효, bit4=착용 중
+//  [0]    flags  bit0=눈 유효, bit1=눈 감김, bit2=근접 유효, bit3=IMU 유효, bit4=착용 중,
+//                bit5=졸음 경고 중, bit6=직전에 버튼 반응
 //  [1]    감음 확률 % (0~100)
 //  [2:4]  근접 raw uint16 LE
 //  [4:16] IMU int16 LE x6 : acc xyz (0.01 m/s2), gyro xyz (mrad/s)
+//
+// 졸음 판정은 기기가 하고 앱은 bit5 를 그대로 쓴다. 앱이 같은 규칙으로 다시 세면
+// 프레임이 유실되거나 버튼으로 경고를 끈 구간에서 기기와 횟수가 어긋난다.
 void sendTelemetry(bool eyeOk, bool closed, float pClosed, bool proxOk, int prox,
-                   bool imuOk, const sensors_event_t& a, const sensors_event_t& g, bool wornNow) {
+                   bool imuOk, const sensors_event_t& a, const sensors_event_t& g, bool wornNow,
+                   bool alertNow, bool btnReacted) {
   if (!bleConnected) return;
   uint8_t f[16] = {};
-  f[0] = (eyeOk ? 1 : 0) | (closed ? 2 : 0) | (proxOk ? 4 : 0) | (imuOk ? 8 : 0) | (wornNow ? 16 : 0);
+  f[0] = (eyeOk ? 1 : 0) | (closed ? 2 : 0) | (proxOk ? 4 : 0) | (imuOk ? 8 : 0) | (wornNow ? 16 : 0)
+       | (alertNow ? 32 : 0) | (btnReacted ? 64 : 0);
   if (eyeOk) f[1] = (uint8_t)constrain((int)(pClosed * 100.0f + 0.5f), 0, 100);
   if (proxOk) { f[2] = prox & 0xFF; f[3] = (prox >> 8) & 0xFF; }
   if (imuOk) {
@@ -539,6 +549,7 @@ void loop() {
     stopAlert("버튼 반응");
     closedStreak = 0;
     resumeAt = millis() + RESUME_DELAY_MS;
+    buttonReacted = true;
   }
   updateOutputs();
   saveSettingsIfDirty();
@@ -622,7 +633,10 @@ void loop() {
   if (mpuOk) mpu.getEvent(&a, &g, &temp);
 
   // ---- 앱으로 전송
-  sendTelemetry(eyeOk, closed, pClosed, vcnlOk, prox, mpuOk, a, g, worn);
+  sendTelemetry(eyeOk, closed, pClosed, vcnlOk, prox, mpuOk, a, g, worn,
+                alertActive, buttonReacted);
+  // 연결이 끊겨 보내지 못한 반응은 버린다. 나중에 연결됐을 때 뒤늦게 보고되면 안 된다.
+  buttonReacted = false;
 
   // ---- 출력 (한 줄)
   Serial.printf("[%5lu] %s%s ", (unsigned long)++count, worn ? "착용" : "미착용", alertActive ? "/경고" : "");
