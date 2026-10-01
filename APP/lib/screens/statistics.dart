@@ -4,108 +4,25 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import '../session.dart';
+import '../session_cache.dart';
 import '../theme.dart';
 import '../widget.dart';
 
-enum _StatsPeriod { today, last7Days, all }
+/// 기록은 [SessionCache.retentionDays]일치만 남기므로 그보다 긴 구간은 두지 않는다.
+enum _StatsPeriod { today, last7Days }
 
 extension on _StatsPeriod {
   String get label => switch (this) {
     _StatsPeriod.today => '오늘',
     _StatsPeriod.last7Days => '최근 7일',
-    _StatsPeriod.all => '전체',
   };
 }
 
-enum _LoadStatus { loading, data, empty, error }
-
-/// 조회 구간에 필요한 세션 / 감지 기록 접근 인터페이스.
-/// 실제 저장소(sqflite 등)가 준비되면 이 인터페이스를 구현한 클래스로 교체한다.
-abstract class StatisticsRepository {
-  Future<List<Session>> sessionsBetween(DateTime start, DateTime end);
-  Future<List<DetectionEvent>> detectionsBetween(DateTime start, DateTime end);
-}
-
-/// TODO(statistics): 실제 세션 저장소가 준비되면 교체할 임시 구현.
-/// 최근 며칠간의 착용 세션을 임의로 만들어 메모리에 들고 있다가 그대로 반환한다.
-/// 오늘 날짜에는 일부러 세션을 만들지 않아, '오늘' 탭에서 빈 상태를 확인할 수 있다.
-class _TODOMockStatisticsRepository implements StatisticsRepository {
-  _TODOMockStatisticsRepository() {
-    _seed();
-  }
-
-  final List<Session> _sessions = [];
-  final List<DetectionEvent> _detections = [];
-
-  void _seed() {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final random = math.Random(7);
-    var sessionId = 1;
-    var detectionId = 1;
-
-    for (var daysAgo = 1; daysAgo <= 40; daysAgo++) {
-      if (random.nextDouble() < 0.15) continue;
-
-      final day = today.subtract(Duration(days: daysAgo));
-      final startHour = 7 + random.nextInt(14);
-      final startedAt = day.add(
-        Duration(hours: startHour, minutes: random.nextInt(60)),
-      );
-      final wornMinutes = 20 + random.nextInt(220);
-      final endedAt = startedAt.add(Duration(minutes: wornMinutes));
-      final detectionCount = random.nextInt(4);
-
-      final id = sessionId++;
-      _sessions.add(
-        Session(
-          id: id,
-          startedAt: startedAt,
-          endedAt: endedAt,
-          detectionCount: detectionCount,
-        ),
-      );
-
-      for (var d = 0; d < detectionCount; d++) {
-        final offsetMinutes = random.nextInt(wornMinutes);
-        _detections.add(
-          DetectionEvent(
-            id: detectionId++,
-            sessionId: id,
-            occurredAt: startedAt.add(Duration(minutes: offsetMinutes)),
-            perclos: 0.3 + random.nextDouble() * 0.4,
-            maxClosedSeconds: 1.0 + random.nextDouble() * 2.0,
-            headDrop: random.nextBool(),
-          ),
-        );
-      }
-    }
-  }
-
-  @override
-  Future<List<Session>> sessionsBetween(DateTime start, DateTime end) async {
-    await Future.delayed(const Duration(milliseconds: 400));
-    return _sessions
-        .where((s) => !s.startedAt.isBefore(start) && s.startedAt.isBefore(end))
-        .toList()
-      ..sort((a, b) => a.startedAt.compareTo(b.startedAt));
-  }
-
-  @override
-  Future<List<DetectionEvent>> detectionsBetween(
-    DateTime start,
-    DateTime end,
-  ) async {
-    await Future.delayed(const Duration(milliseconds: 400));
-    return _detections
-        .where((d) => !d.occurredAt.isBefore(start) && d.occurredAt.isBefore(end))
-        .toList()
-      ..sort((a, b) => a.occurredAt.compareTo(b.occurredAt));
-  }
-}
-
-/// 통계 화면. 기간(오늘/최근 7일/전체)을 고르면 착용 요약, 막대 그래프,
-/// 날짜별 세션 목록을 다시 불러와 보여준다.
+/// 통계 화면. 기간(오늘/최근 7일)을 고르면 착용 요약, 막대 그래프,
+/// 날짜별 세션 목록을 보여준다.
+///
+/// 값은 SessionRecorder가 기기 로그로부터 쌓은 [SessionCache]에서 읽는다.
+/// 기록이 바뀌면(착용 시작/종료, 졸음 감지) 알림을 받아 화면을 다시 그린다.
 class StatisticsScreen extends StatefulWidget {
   const StatisticsScreen({super.key});
 
@@ -114,17 +31,14 @@ class StatisticsScreen extends StatefulWidget {
 }
 
 class _StatisticsScreenState extends State<StatisticsScreen> {
-  final StatisticsRepository _repository = _TODOMockStatisticsRepository();
+  final SessionCache _cache = SessionCache.instance;
 
   _StatsPeriod _period = _StatsPeriod.last7Days;
-  _LoadStatus _status = _LoadStatus.loading;
-  List<Session> _sessions = const [];
-  List<DetectionEvent> _detections = const [];
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _cache.load();
   }
 
   ({DateTime start, DateTime end}) _rangeFor(_StatsPeriod period) {
@@ -134,63 +48,47 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
     return switch (period) {
       _StatsPeriod.today => (start: today, end: end),
       _StatsPeriod.last7Days => (
-        start: today.subtract(const Duration(days: 6)),
-        end: end,
-      ),
-      _StatsPeriod.all => (
-        start: today.subtract(const Duration(days: 55)),
+        start: today.subtract(
+          const Duration(days: SessionCache.retentionDays - 1),
+        ),
         end: end,
       ),
     };
   }
 
-  Future<void> _load() async {
-    setState(() => _status = _LoadStatus.loading);
-    final range = _rangeFor(_period);
-    try {
-      final sessions = await _repository.sessionsBetween(range.start, range.end);
-      final detections = await _repository.detectionsBetween(
-        range.start,
-        range.end,
-      );
-      if (!mounted) return;
-      setState(() {
-        _sessions = sessions;
-        _detections = detections;
-        _status = sessions.isEmpty ? _LoadStatus.empty : _LoadStatus.data;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _status = _LoadStatus.error);
-    }
-  }
-
   void _onPeriodChanged(_StatsPeriod period) {
     if (period == _period) return;
     setState(() => _period = period);
-    _load();
   }
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Text('통계', style: Theme.of(context).textTheme.headlineMedium),
-        const SizedBox(height: 16),
-        _PeriodControl(value: _period, onChanged: _onPeriodChanged),
-        const SizedBox(height: 16),
-        switch (_status) {
-          _LoadStatus.loading => const _LoadingView(),
-          _LoadStatus.error => _ErrorView(onRetry: _load),
-          _LoadStatus.empty => const _EmptyView(),
-          _LoadStatus.data => _StatsContent(
-            period: _period,
-            sessions: _sessions,
-            detections: _detections,
-          ),
-        },
-      ],
+    return ListenableBuilder(
+      listenable: _cache,
+      builder: (context, _) {
+        final range = _rangeFor(_period);
+        final sessions = _cache.sessionsBetween(range.start, range.end);
+
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Text('통계', style: Theme.of(context).textTheme.headlineMedium),
+            const SizedBox(height: 16),
+            _PeriodControl(value: _period, onChanged: _onPeriodChanged),
+            const SizedBox(height: 16),
+            if (!_cache.isLoaded)
+              const _LoadingView()
+            else if (sessions.isEmpty)
+              const _EmptyView()
+            else
+              _StatsContent(
+                period: _period,
+                sessions: sessions,
+                detections: _cache.detectionsBetween(range.start, range.end),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -251,36 +149,6 @@ class _LoadingView extends StatelessWidget {
     return const Padding(
       padding: EdgeInsets.symmetric(vertical: 80),
       child: Center(child: CircularProgressIndicator()),
-    );
-  }
-}
-
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.onRetry});
-
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(
-            Icons.error_outline_rounded,
-            size: 48,
-            color: AppColors.textSecondary,
-          ),
-          const SizedBox(height: 12),
-          Text(
-            '통계를 불러오지 못했습니다',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 20),
-          OutlinedButton(onPressed: onRetry, child: const Text('다시 시도')),
-        ],
-      ),
     );
   }
 }
@@ -355,7 +223,15 @@ class _StatsContent extends StatelessWidget {
   final List<Session> sessions;
   final List<DetectionEvent> detections;
 
-  static const List<String> _weekdayLabels = ['월', '화', '수', '목', '금', '토', '일'];
+  static const List<String> _weekdayLabels = [
+    '월',
+    '화',
+    '수',
+    '목',
+    '금',
+    '토',
+    '일',
+  ];
 
   static String _two(int n) => n.toString().padLeft(2, '0');
 
@@ -383,40 +259,27 @@ class _StatsContent extends StatelessWidget {
             ),
         ];
       case _StatsPeriod.last7Days:
+        const days = SessionCache.retentionDays;
         final now = DateTime.now();
         final today = DateTime(now.year, now.month, now.day);
-        final start = today.subtract(const Duration(days: 6));
+        final start = today.subtract(const Duration(days: days - 1));
         return [
-          for (var i = 0; i < 7; i++)
+          for (var i = 0; i < days; i++)
             _bucket(
               start.add(Duration(days: i)),
               const Duration(days: 1),
               _monthDay(start.add(Duration(days: i))),
             ),
         ];
-      case _StatsPeriod.all:
-        final now = DateTime.now();
-        final today = DateTime(now.year, now.month, now.day);
-        final rangeStart = today.subtract(const Duration(days: 55));
-        var weekStart = rangeStart.subtract(
-          Duration(days: rangeStart.weekday - 1),
-        );
-        final buckets = <_ChartBucket>[];
-        final end = today.add(const Duration(days: 1));
-        while (weekStart.isBefore(end)) {
-          buckets.add(
-            _bucket(weekStart, const Duration(days: 7), '${_monthDay(weekStart)}주'),
-          );
-          weekStart = weekStart.add(const Duration(days: 7));
-        }
-        return buckets;
     }
   }
 
   _ChartBucket _bucket(DateTime start, Duration span, String label) {
     final end = start.add(span);
     final count = detections
-        .where((d) => !d.occurredAt.isBefore(start) && d.occurredAt.isBefore(end))
+        .where(
+          (d) => !d.occurredAt.isBefore(start) && d.occurredAt.isBefore(end),
+        )
         .length;
     return _ChartBucket(start: start, end: end, label: label, count: count);
   }
@@ -548,7 +411,9 @@ class _SummaryStat extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           value,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(fontSize: 22),
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontSize: 22),
         ),
       ],
     );

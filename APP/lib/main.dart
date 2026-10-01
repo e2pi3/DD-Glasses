@@ -5,6 +5,7 @@ import 'screens/home.dart';
 import 'screens/setting.dart';
 import 'screens/statistics.dart';
 import 'sensor_log.dart';
+import 'session_recorder.dart';
 import 'theme.dart';
 
 const List<String> _kTabTitles = ['통계', '홈', '설정'];
@@ -21,6 +22,8 @@ void main() {
   );
   // 로그 화면을 열기 전에도 기기 값이 쌓이도록 앱 시작 시 미리 구독한다.
   SensorLog.instance;
+  // 같은 로그를 착용 세션 / 졸음 감지 기록으로 바꿔 폰에 쌓기 시작한다.
+  SessionRecorder.instance.start();
   runApp(const MyApp());
 }
 
