@@ -24,6 +24,7 @@ class BleProtocol {
   );
 
   /// 설정 characteristic (read / write). 페이로드는 [DeviceSettings] 참고.
+  /// 3바이트: [음량, 진동, 플래그(bit0=소리 on, bit1=진동 on)].
   /// 설정의 원본은 기기(NVS)이므로 앱은 연결할 때마다 이 값을 읽어 온다.
   static final Guid settingsChar = Guid('8e7f0004-6c1b-4d3a-9f2e-3dd6a5e0b001');
 
@@ -41,25 +42,55 @@ class SettingLevel {
   static const int defaultLevel = 3;
 }
 
-/// 기기에 저장된 사용자 설정. 페이로드: [음량 1~5, 진동 1~5].
+/// 기기에 저장된 사용자 설정. 페이로드: [음량 1~5, 진동 1~5, 플래그].
+/// 플래그는 bit0=소리 켜짐, bit1=진동 켜짐.
+///
+/// 꺼도 단계는 그대로 두므로 다시 켜면 직전 세기로 돌아온다. 그래서 "꺼짐"을 0단계로
+/// 표현하지 않는다. 둘을 동시에 끄면 졸음 경고를 전달할 수단이 없어지므로 펌웨어가
+/// 그런 쓰기를 거부한다 ([vibrationEnabled] / [soundEnabled] 중 하나는 항상 켜져 있다).
 class DeviceSettings {
-  const DeviceSettings({required this.volume, required this.vibration});
+  const DeviceSettings({
+    required this.volume,
+    required this.vibration,
+    required this.soundEnabled,
+    required this.vibrationEnabled,
+  });
 
   final int volume;
   final int vibration;
+  final bool soundEnabled;
+  final bool vibrationEnabled;
 
-  DeviceSettings copyWith({int? volume, int? vibration}) => DeviceSettings(
+  DeviceSettings copyWith({
+    int? volume,
+    int? vibration,
+    bool? soundEnabled,
+    bool? vibrationEnabled,
+  }) => DeviceSettings(
     volume: volume ?? this.volume,
     vibration: vibration ?? this.vibration,
+    soundEnabled: soundEnabled ?? this.soundEnabled,
+    vibrationEnabled: vibrationEnabled ?? this.vibrationEnabled,
   );
 
   static DeviceSettings? parse(List<int> bytes) {
     if (bytes.length < 2) return null;
     int clamp(int v) => v.clamp(SettingLevel.min, SettingLevel.max);
-    return DeviceSettings(volume: clamp(bytes[0]), vibration: clamp(bytes[1]));
+    // 플래그를 보내지 않는 구버전 펌웨어는 둘 다 켜진 것으로 본다.
+    final flags = bytes.length >= 3 ? bytes[2] : 0x03;
+    return DeviceSettings(
+      volume: clamp(bytes[0]),
+      vibration: clamp(bytes[1]),
+      soundEnabled: flags & 1 != 0,
+      vibrationEnabled: flags & 2 != 0,
+    );
   }
 
-  List<int> toBytes() => [volume, vibration];
+  List<int> toBytes() => [
+    volume,
+    vibration,
+    (soundEnabled ? 1 : 0) | (vibrationEnabled ? 2 : 0),
+  ];
 }
 
 enum PreviewType { sound, vibration }

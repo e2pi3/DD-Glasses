@@ -56,7 +56,9 @@ constexpr uint8_t  VIB_LEDC_CH = 6;
 constexpr uint32_t VIB_FREQ    = 1000;   // Hz
 
 // ===== 사용자 설정 (앱에서 변경, NVS 에 저장) =====
-// 1~5 단계. 0(무음/꺼짐)은 경고를 못 듣는 사고를 막기 위해 허용하지 않는다.
+// 세기는 1~5 단계이고, 진동과 소리를 각각 켜고 끌 수 있다. 꺼도 단계는 그대로 두므로
+// 다시 켜면 직전 세기로 돌아온다(그래서 "꺼짐"을 0단계로 표현하지 않는다).
+// 다만 둘을 동시에 끄면 경고를 전달할 수단이 없어지므로 마지막 하나는 끌 수 없게 막는다.
 constexpr uint8_t LEVEL_MIN = 1;
 constexpr uint8_t LEVEL_MAX = 5;
 constexpr uint8_t LEVEL_DEFAULT = 3;
@@ -68,6 +70,8 @@ static const uint8_t VIB_DUTY[LEVEL_MAX + 1]  = {0, 110, 140, 175, 215, 255};
 static Preferences prefs;
 static volatile uint8_t volumeLevel    = LEVEL_DEFAULT;
 static volatile uint8_t vibrationLevel = LEVEL_DEFAULT;
+static volatile bool    soundEnabled     = true;
+static volatile bool    vibrationEnabled = true;
 static volatile bool    settingsDirty  = false;   // BLE 콜백에서 바뀐 값을 loop 에서 NVS 에 저장
 
 // ===== 착용 판정 =====
@@ -117,7 +121,7 @@ static bool     previewActive = false;
 #define UUID_TELEMETRY_SERVICE   "8e7f0001-6c1b-4d3a-9f2e-3dd6a5e0b001"
 #define UUID_TELEMETRY_CHAR      "8e7f0002-6c1b-4d3a-9f2e-3dd6a5e0b001"   // notify
 #define UUID_SETTINGS_SERVICE    "8e7f0003-6c1b-4d3a-9f2e-3dd6a5e0b001"
-#define UUID_SETTINGS_CHAR       "8e7f0004-6c1b-4d3a-9f2e-3dd6a5e0b001"   // read / write : [음량, 진동]
+#define UUID_SETTINGS_CHAR       "8e7f0004-6c1b-4d3a-9f2e-3dd6a5e0b001"   // read / write : [음량, 진동, 플래그(bit0=소리 on, bit1=진동 on)]
 #define UUID_PREVIEW_CHAR        "8e7f0005-6c1b-4d3a-9f2e-3dd6a5e0b001"   // write : [종류(0=소리,1=진동), 단계]
 
 static BLEServer*         bleServer    = nullptr;
@@ -295,7 +299,13 @@ void loadSettings() {
   uint8_t b = prefs.getUChar("vib", LEVEL_DEFAULT);
   volumeLevel    = (v >= LEVEL_MIN && v <= LEVEL_MAX) ? v : LEVEL_DEFAULT;
   vibrationLevel = (b >= LEVEL_MIN && b <= LEVEL_MAX) ? b : LEVEL_DEFAULT;
-  Serial.printf("설정 로드: 음량=%u 진동=%u\n", volumeLevel, vibrationLevel);
+  // 플래그를 저장한 적 없는 기존 기기는 둘 다 켜진 상태로 시작한다
+  soundEnabled     = prefs.getBool("vol_on", true);
+  vibrationEnabled = prefs.getBool("vib_on", true);
+  if (!soundEnabled && !vibrationEnabled) soundEnabled = true;
+  Serial.printf("설정 로드: 음량=%u(%s) 진동=%u(%s)\n",
+                volumeLevel, soundEnabled ? "on" : "off",
+                vibrationLevel, vibrationEnabled ? "on" : "off");
 }
 
 void saveSettingsIfDirty() {
@@ -303,7 +313,11 @@ void saveSettingsIfDirty() {
   settingsDirty = false;
   prefs.putUChar("vol", volumeLevel);   // 값이 같으면 NVS 쓰기를 건너뛴다
   prefs.putUChar("vib", vibrationLevel);
-  Serial.printf("설정 저장: 음량=%u 진동=%u\n", volumeLevel, vibrationLevel);
+  prefs.putBool("vol_on", soundEnabled);
+  prefs.putBool("vib_on", vibrationEnabled);
+  Serial.printf("설정 저장: 음량=%u(%s) 진동=%u(%s)\n",
+                volumeLevel, soundEnabled ? "on" : "off",
+                vibrationLevel, vibrationEnabled ? "on" : "off");
 }
 
 // ---- BLE 콜백 (BLE 태스크에서 실행되므로 loop 와 공유하는 값만 건드린다)
@@ -324,9 +338,18 @@ class SettingsCallbacks : public BLECharacteristicCallbacks {
     if (c->getLength() < 2) return;
     const uint8_t* d = c->getData();
     if (d[0] < LEVEL_MIN || d[0] > LEVEL_MAX || d[1] < LEVEL_MIN || d[1] > LEVEL_MAX) return;
-    volumeLevel    = d[0];
-    vibrationLevel = d[1];
-    settingsDirty  = true;
+    // 플래그를 보내지 않는 구버전 앱은 둘 다 켜짐으로 본다.
+    bool snd = true, vbr = true;
+    if (c->getLength() >= 3) {
+      snd = d[2] & 1;
+      vbr = d[2] & 2;
+      if (!snd && !vbr) return;   // 둘 다 끄면 경고를 전달할 수단이 없으므로 거부한다
+    }
+    volumeLevel      = d[0];
+    vibrationLevel   = d[1];
+    soundEnabled     = snd;
+    vibrationEnabled = vbr;
+    settingsDirty    = true;
   }
 };
 
@@ -372,8 +395,9 @@ void initBle() {
 
 // 현재 설정을 읽기 값으로 갱신 (앱이 언제 읽어도 최신값이 나오도록 loop 에서 매번 호출)
 void refreshSettingsValue() {
-  uint8_t v[2] = {volumeLevel, vibrationLevel};
-  settingsChr->setValue(v, 2);
+  uint8_t v[3] = {volumeLevel, vibrationLevel,
+                  (uint8_t)((soundEnabled ? 1 : 0) | (vibrationEnabled ? 2 : 0))};
+  settingsChr->setValue(v, 3);
 }
 
 // 텔레메트리 프레임 (16바이트, 기본 MTU 23 에서도 한 패킷) — 앱 ble_protocol.dart 의 SensorFrame.parse 참고
@@ -438,8 +462,10 @@ void stopAlert(const char* why) {
 }
 
 // 진동/부저 출력을 매 루프 갱신. 앱의 설정 미리보기가 졸음 경고보다 우선한다.
-//  - 미리보기: 소리는 200ms 울림 x2, 진동은 700ms 연속
-//  - 졸음 경고: 진동 0.75s 울림/0.75s 쉼 반복, 4번째 울림이 끝난 뒤부터 같은 박자로 소리도 함께
+//  - 미리보기: 소리는 200ms 울림 x2, 진동은 700ms 연속. 앱이 명시적으로 요청한 것이므로 on/off 와 무관하게 울린다.
+//  - 졸음 경고: 진동 0.75s 울림/0.75s 쉼 반복, 4번째 울림이 끝난 뒤부터 같은 박자로 소리도 함께.
+//    꺼 둔 쪽은 울리지 않고, 진동이 꺼져 있으면 진동만 울리는 구간이 의미가 없으므로
+//    소리를 첫 펄스부터 바로 울린다 (안 그러면 처음 6초간 아무 경고도 나가지 않는다).
 void updateOutputs() {
   uint32_t now = millis();
   if (previewPending) {
@@ -461,8 +487,11 @@ void updateOutputs() {
   } else if (alertActive) {
     uint32_t t = now - alertStart;
     if ((t % ALERT_PERIOD_MS) < ALERT_PULSE_MS) {
-      vib = VIB_DUTY[vibrationLevel];
-      if (t / ALERT_PERIOD_MS >= ALERT_VIB_ONLY_PULSES) buzz = BUZZ_DUTY[volumeLevel];
+      if (vibrationEnabled) vib = VIB_DUTY[vibrationLevel];
+      if (soundEnabled &&
+          (!vibrationEnabled || t / ALERT_PERIOD_MS >= ALERT_VIB_ONLY_PULSES)) {
+        buzz = BUZZ_DUTY[volumeLevel];
+      }
     }
   }
   ledcWrite(BUZZER_PIN, buzz);

@@ -9,7 +9,8 @@ import 'log_screen.dart';
 /// 설정 화면.
 /// 기기 연결 정보는 별도의 카드로 상단에 항상 표시하고, 그 아래로 설정 항목들을
 /// 모아놓은 카드를 배치한다. 기기가 연결된 상태일 때만 설정 카드 안에
-/// 로그 / 기기 연결 해제 / 피드백 강도 조절 / 경고음 음량 설정 항목을 얇은 구분선으로 나눠 보여준다.
+/// 로그 / 기기 연결 해제 / 진동 / 경고음 항목을 얇은 구분선으로 나눠 보여준다.
+/// 진동과 경고음은 각각 토글로 켜고 끌 수 있고, 켜져 있을 때만 세기 슬라이더가 함께 보인다.
 class SettingScreen extends StatelessWidget {
   const SettingScreen({super.key});
 
@@ -28,6 +29,10 @@ class SettingScreen extends StatelessWidget {
     return ListenableBuilder(
       listenable: connection,
       builder: (context, _) {
+        final settings = connection.settings;
+        final anyFeedbackOn =
+            settings != null && (settings.soundEnabled || settings.vibrationEnabled);
+
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -62,36 +67,22 @@ class SettingScreen extends StatelessWidget {
                       ),
                     ),
                     _thinDivider,
-                    _SettingTile(
-                      icon: Icons.tune_rounded,
-                      title: '피드백 강도 조절',
-                      value: connection.settings?.vibration,
-                      onTap: () => _showLevelSheet(
-                        context,
-                        title: '진동 세기',
-                        icon: Icons.vibration_rounded,
-                        previewType: PreviewType.vibration,
-                        read: (s) => s.vibration,
-                        write: (s, v) => s.copyWith(vibration: v),
-                      ),
-                    ),
+                    const _FeedbackSetting(type: PreviewType.vibration),
                     _thinDivider,
-                    _SettingTile(
-                      icon: Icons.volume_up_rounded,
-                      title: '경고음 음량 설정',
-                      value: connection.settings?.volume,
-                      onTap: () => _showLevelSheet(
-                        context,
-                        title: '경고음 음량',
-                        icon: Icons.volume_up_rounded,
-                        previewType: PreviewType.sound,
-                        read: (s) => s.volume,
-                        write: (s, v) => s.copyWith(volume: v),
-                      ),
-                    ),
+                    const _FeedbackSetting(type: PreviewType.sound),
                   ],
                 ),
               ),
+              if (anyFeedbackOn) ...[
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Text(
+                    '슬라이더를 놓으면 기기에서 바로 확인할 수 있어요',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
             ],
           ],
         );
@@ -100,108 +91,133 @@ class SettingScreen extends StatelessWidget {
   }
 }
 
-/// 1~5단계 슬라이더 시트를 띄운다. 값은 기기에서 읽어온 [DeviceConnection.settings]가 원본이고,
-/// 슬라이더를 놓는 순간 기기에 쓰고 그 단계로 잠깐 울리거나 진동시켜 확인할 수 있게 한다.
-void _showLevelSheet(
-  BuildContext context, {
-  required String title,
-  required IconData icon,
-  required PreviewType previewType,
-  required int Function(DeviceSettings) read,
-  required DeviceSettings Function(DeviceSettings, int) write,
-}) {
-  showModalBottomSheet<void>(
-    context: context,
-    backgroundColor: AppColors.surface,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-    ),
-    builder: (_) => _LevelSheet(
-      title: title,
-      icon: icon,
-      previewType: previewType,
-      read: read,
-      write: write,
-    ),
-  );
-}
+/// 진동 / 경고음 한 종류의 on-off 토글과, 켜져 있을 때만 아래에 함께 보이는 1~5단계 세기 슬라이더.
+/// 값의 원본은 기기에서 읽어온 [DeviceConnection.settings]이고, 슬라이더를 놓거나 토글을 켜는 순간
+/// 기기에 쓰면서 그 단계로 잠깐 울리거나 진동시켜 확인할 수 있게 한다.
+class _FeedbackSetting extends StatefulWidget {
+  const _FeedbackSetting({required this.type});
 
-class _LevelSheet extends StatefulWidget {
-  const _LevelSheet({
-    required this.title,
-    required this.icon,
-    required this.previewType,
-    required this.read,
-    required this.write,
-  });
-
-  final String title;
-  final IconData icon;
-  final PreviewType previewType;
-  final int Function(DeviceSettings) read;
-  final DeviceSettings Function(DeviceSettings, int) write;
+  final PreviewType type;
 
   @override
-  State<_LevelSheet> createState() => _LevelSheetState();
+  State<_FeedbackSetting> createState() => _FeedbackSettingState();
 }
 
-class _LevelSheetState extends State<_LevelSheet> {
+class _FeedbackSettingState extends State<_FeedbackSetting> {
   final _connection = DeviceConnection.instance;
+
+  /// 드래그 중인 단계. 손을 떼고 기기에 쓴 뒤에는 다시 기기 값을 따른다.
   int? _dragLevel;
 
-  int get _level =>
-      _dragLevel ??
-      (_connection.settings == null
-          ? SettingLevel.defaultLevel
-          : widget.read(_connection.settings!));
+  bool get _isVibration => widget.type == PreviewType.vibration;
 
-  Future<void> _commit(int level) async {
+  String get _title => _isVibration ? '진동' : '경고음';
+  String get _caption => _isVibration ? '진동 세기' : '음량';
+  IconData get _icon =>
+      _isVibration ? Icons.vibration_rounded : Icons.volume_up_rounded;
+
+  int _levelOf(DeviceSettings s) => _isVibration ? s.vibration : s.volume;
+  bool _enabledOf(DeviceSettings s) =>
+      _isVibration ? s.vibrationEnabled : s.soundEnabled;
+  bool _otherEnabledOf(DeviceSettings s) =>
+      _isVibration ? s.soundEnabled : s.vibrationEnabled;
+
+  DeviceSettings _withLevel(DeviceSettings s, int level) =>
+      _isVibration ? s.copyWith(vibration: level) : s.copyWith(volume: level);
+  DeviceSettings _withEnabled(DeviceSettings s, bool enabled) => _isVibration
+      ? s.copyWith(vibrationEnabled: enabled)
+      : s.copyWith(soundEnabled: enabled);
+
+  Future<void> _commitLevel(int level) async {
     final current = _connection.settings;
     if (current == null) return;
-    await _connection.updateSettings(widget.write(current, level));
-    await _connection.previewSetting(widget.previewType, level);
+    await _connection.updateSettings(_withLevel(current, level));
+    await _connection.previewSetting(widget.type, level);
     if (mounted) setState(() => _dragLevel = null);
+  }
+
+  /// 둘 다 꺼지면 졸음 경고를 전달할 수단이 없으므로 마지막 하나는 끄지 못하게 막는다.
+  /// 펌웨어도 같은 쓰기를 거부하지만, 여기서 먼저 막아 이유를 알려준다.
+  Future<void> _toggle(bool enabled) async {
+    final current = _connection.settings;
+    if (current == null) return;
+    if (!enabled && !_otherEnabledOf(current)) {
+      await showAppDialog(
+        context: context,
+        message: '진동과 경고음을 모두 끄면 졸음 경고를 받을 수 없어요.\n하나는 켜 두세요.',
+        actions: [const AppDialogAction(label: '확인')],
+      );
+      return;
+    }
+    await _connection.updateSettings(_withEnabled(current, enabled));
+    if (enabled) {
+      await _connection.previewSetting(widget.type, _levelOf(current));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    final level = _level;
 
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    // 부모가 이 위젯을 const 로 만들어 두므로, 설정이 바뀔 때 다시 그리려면 직접 구독해야 한다.
+    return ListenableBuilder(
+      listenable: _connection,
+      builder: (context, _) {
+        final settings = _connection.settings;
+        final enabled = settings != null && _enabledOf(settings);
+        final level = _dragLevel ??
+            (settings == null
+                ? SettingLevel.defaultLevel
+                : _levelOf(settings));
+
+        return Column(
           children: [
-            Row(
-              children: [
-                Icon(widget.icon, color: AppColors.textSecondary),
-                const SizedBox(width: 12),
-                Expanded(child: Text(widget.title, style: textTheme.titleMedium)),
-                Text('$level / ${SettingLevel.max}', style: textTheme.titleMedium),
-              ],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 12, 4),
+              child: Row(
+                children: [
+                  Icon(_icon, color: AppColors.textSecondary, size: 22),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(_title, style: textTheme.bodyMedium),
+                  ),
+                  Switch(
+                    value: enabled,
+                    onChanged: settings == null ? null : _toggle,
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 12),
-            Slider(
-              value: level.toDouble(),
-              min: SettingLevel.min.toDouble(),
-              max: SettingLevel.max.toDouble(),
-              divisions: SettingLevel.max - SettingLevel.min,
-              label: '$level',
-              onChanged: _connection.settings == null
-                  ? null
-                  : (v) => setState(() => _dragLevel = v.round()),
-              onChangeEnd: (v) => _commit(v.round()),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '슬라이더를 놓으면 기기에서 바로 확인할 수 있어요',
-              style: textTheme.bodySmall,
-            ),
+            if (enabled)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(34, 0, 20, 8),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Text(_caption, style: textTheme.bodySmall),
+                        const Spacer(),
+                        Text(
+                          '$level / ${SettingLevel.max}',
+                          style: textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                    Slider(
+                      value: level.toDouble(),
+                      min: SettingLevel.min.toDouble(),
+                      max: SettingLevel.max.toDouble(),
+                      divisions: SettingLevel.max - SettingLevel.min,
+                      label: '$level',
+                      onChanged: (v) => setState(() => _dragLevel = v.round()),
+                      onChangeEnd: (v) => _commitLevel(v.round()),
+                    ),
+                  ],
+                ),
+              ),
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -263,15 +279,11 @@ class _SettingTile extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.onTap,
-    this.value,
   });
 
   final IconData icon;
   final String title;
   final VoidCallback onTap;
-
-  /// 현재 설정 단계. 있으면 오른쪽에 `n/5`로 표시한다.
-  final int? value;
 
   @override
   Widget build(BuildContext context) {
@@ -286,13 +298,6 @@ class _SettingTile extends StatelessWidget {
             Expanded(
               child: Text(title, style: Theme.of(context).textTheme.bodyMedium),
             ),
-            if (value != null) ...[
-              Text(
-                '$value/${SettingLevel.max}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(width: 4),
-            ],
             const Icon(
               Icons.chevron_right_rounded,
               color: AppColors.textSecondary,
