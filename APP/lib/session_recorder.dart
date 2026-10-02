@@ -22,13 +22,17 @@ class SessionRecorder {
   /// 프레임이 이보다 오래 끊기면 착용 세션을 닫는다. 기기 전원이 꺼진 경우를 대비한 값.
   static const Duration _frameTimeout = Duration(seconds: 10);
 
-  /// 착용 시간을 갱신하는 주기. 프레임마다(0.5초) 갱신하면 파일 쓰기와 화면 갱신이
-  /// 계속 밀리기만 하므로, 이 주기로 묶어서 갱신한다. 세션을 닫을 때는 즉시 갱신한다.
+  /// 착용 시간을 갱신하는 주기. 프레임마다(0.5초) 갱신하면 파일 쓰기가 계속 밀리기만
+  /// 하므로, 이 주기로 묶어서 갱신한다. 이 갱신은 화면에 알리지 않고, 세션을 닫을 때만 알린다.
   static const Duration _extendInterval = Duration(seconds: 5);
 
   final DeviceConnection _connection = DeviceConnection.instance;
   final SessionCache _cache = SessionCache.instance;
   final EyeStats _eyeStats = EyeStats();
+
+  /// 지금 착용 중인 세션의 id. 착용 중이 아니면 null.
+  /// 통계 화면이 진행 중인 세션의 착용 시간을 실시간으로 계산하는 데 쓴다.
+  int? get activeSessionId => _sessionId;
 
   bool _started = false;
   StreamSubscription<SensorFrame>? _frameSub;
@@ -76,7 +80,7 @@ class SessionRecorder {
       _sessionId = sessionId;
       _lastExtendAt = now;
     } else if (now.difference(_lastExtendAt ?? now) >= _extendInterval) {
-      _cache.extendSession(sessionId, now);
+      _cache.extendSession(sessionId, now, notify: false);
       _lastExtendAt = now;
     }
 

@@ -92,7 +92,7 @@ void main() {
       cache.startSession(day(0));
       await cache.flush();
 
-      final names = dir.listSync().map((e) => e.path.split('/').last).toList();
+      final names = dir.listSync().map((e) => e.uri.pathSegments.last).toList();
 
       expect(names, ['wear_records.json']);
     });
@@ -233,6 +233,22 @@ void main() {
       cache.extendSession(id, day(0).add(const Duration(hours: 1)));
 
       expect(notified, 2);
+    });
+
+    test('notify: false 로 늘린 착용 시간은 화면에 알리지 않지만 기록에는 남는다', () async {
+      final cache = open();
+      await cache.load();
+      final id = cache.startSession(day(0));
+      var notified = 0;
+      cache.addListener(() => notified++);
+
+      cache.extendSession(id, day(0).add(const Duration(hours: 1)), notify: false);
+
+      expect(notified, 0);
+      expect(
+        cache.sessionsBetween(day(0), now).single.endedAt,
+        day(0).add(const Duration(hours: 1)),
+      );
     });
   });
 }

@@ -203,10 +203,7 @@ class DeviceConnection extends ChangeNotifier {
       BleProtocol.settingsService,
       BleProtocol.previewChar,
     );
-    final settingsChar = _settingsChar;
-    if (settingsChar != null) {
-      _settings = DeviceSettings.parse(await settingsChar.read());
-    }
+    _settings = await _readSettings();
 
     // 연결 과정 중 기기가 끊겼다면 connectionState 리스너가 이미 정리했다.
     if (_device != device) throw StateError('disconnected during setup');
@@ -215,6 +212,40 @@ class DeviceConnection extends ChangeNotifier {
         ? '${device.platformName} (${device.remoteId.str})'
         : device.remoteId.str;
     _setStatus(ConnectionStatus.deviceConnected);
+  }
+
+  /// 기기에서 설정을 읽는다. 값이 비어 있거나 짧게 오면(기기가 막 켜졌을 때 등) 잠깐 뒤 다시 읽는다.
+  /// 끝내 못 읽으면 null 이고, 설정 화면은 이를 "불러오는 중"으로 보여준다(꺼짐으로 보여주지 않는다).
+  Future<DeviceSettings?> _readSettings() async {
+    final char = _settingsChar;
+    if (char == null) return null;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final parsed = DeviceSettings.parse(await char.read());
+        if (parsed != null) return parsed;
+      } catch (e) {
+        debugPrint('BLE settings read error: $e');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
+    return null;
+  }
+
+  bool _reloadingSettings = false;
+
+  /// 연결은 됐는데 설정을 못 읽은 상태에서 설정을 다시 읽는다. 성공하면 화면에 알린다.
+  Future<void> reloadSettings() async {
+    if (_reloadingSettings || !isConnected || _settings != null) return;
+    _reloadingSettings = true;
+    try {
+      final loaded = await _readSettings();
+      if (loaded != null && isConnected) {
+        _settings = loaded;
+        notifyListeners();
+      }
+    } finally {
+      _reloadingSettings = false;
+    }
   }
 
   BluetoothCharacteristic? _findChar(
@@ -258,10 +289,17 @@ class DeviceConnection extends ChangeNotifier {
 
   /// 기기가 [level] 단계로 잠깐 울리거나 진동하게 해서 설정을 확인할 수 있게 한다.
   Future<void> previewSetting(PreviewType type, int level) async {
+    // 방금 쓴 설정(낙관적 갱신 포함)의 패턴으로 들려준다.
+    final settings = _settings;
+    final pattern = settings == null
+        ? 0
+        : (type == PreviewType.sound
+              ? settings.soundPattern
+              : settings.vibrationPattern);
     final char = _previewChar;
     if (char == null || !isConnected) return;
     try {
-      await char.write([type.index, level]);
+      await char.write([type.index, level, pattern]);
     } catch (e) {
       debugPrint('BLE preview write error: $e');
     }

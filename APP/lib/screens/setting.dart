@@ -32,9 +32,16 @@ class SettingScreen extends StatelessWidget {
         final settings = connection.settings;
         final anyFeedbackOn =
             settings != null && (settings.soundEnabled || settings.vibrationEnabled);
+        // 연결됐는데 설정을 못 읽었다면 다시 읽어 본다(성공하면 알림으로 이 화면이 다시 그려진다).
+        if (connection.isConnected && settings == null) {
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) => connection.reloadSettings(),
+          );
+        }
 
         return ListView(
-          padding: const EdgeInsets.all(16),
+          // 하단 바(extendBody)에 가리지 않도록 그 높이만큼 아래 여백을 둔다.
+          padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + MediaQuery.paddingOf(context).bottom),
           children: [
             AppCard(child: _DeviceInfoTile(connection: connection)),
             if (connection.isConnected) ...[
@@ -70,6 +77,8 @@ class SettingScreen extends StatelessWidget {
                     const _FeedbackSetting(type: PreviewType.vibration),
                     _thinDivider,
                     const _FeedbackSetting(type: PreviewType.sound),
+                    _thinDivider,
+                    const _HeadDropSetting(),
                   ],
                 ),
               ),
@@ -78,7 +87,7 @@ class SettingScreen extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   child: Text(
-                    '슬라이더를 놓으면 기기에서 바로 확인할 수 있어요',
+                    '슬라이더를 놓거나 종류를 고르면 기기에서 바로 확인할 수 있어요',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
@@ -122,6 +131,15 @@ class _FeedbackSettingState extends State<_FeedbackSetting> {
   bool _otherEnabledOf(DeviceSettings s) =>
       _isVibration ? s.soundEnabled : s.vibrationEnabled;
 
+  int _patternOf(DeviceSettings s) =>
+      _isVibration ? s.vibrationPattern : s.soundPattern;
+  List<String> get _patternLabels => _isVibration
+      ? FeedbackPattern.vibrationLabels
+      : FeedbackPattern.soundLabels;
+  DeviceSettings _withPattern(DeviceSettings s, int pattern) => _isVibration
+      ? s.copyWith(vibrationPattern: pattern)
+      : s.copyWith(soundPattern: pattern);
+
   DeviceSettings _withLevel(DeviceSettings s, int level) =>
       _isVibration ? s.copyWith(vibration: level) : s.copyWith(volume: level);
   DeviceSettings _withEnabled(DeviceSettings s, bool enabled) => _isVibration
@@ -134,6 +152,16 @@ class _FeedbackSettingState extends State<_FeedbackSetting> {
     await _connection.updateSettings(_withLevel(current, level));
     await _connection.previewSetting(widget.type, level);
     if (mounted) setState(() => _dragLevel = null);
+  }
+
+  Future<void> _commitPattern(int pattern) async {
+    final current = _connection.settings;
+    if (current == null) return;
+    // 이미 선택된 종류를 다시 눌러도 미리보기는 다시 들려준다.
+    if (pattern != _patternOf(current)) {
+      await _connection.updateSettings(_withPattern(current, pattern));
+    }
+    await _connection.previewSetting(widget.type, _levelOf(current));
   }
 
   /// 둘 다 꺼지면 졸음 경고를 전달할 수단이 없으므로 마지막 하나는 끄지 못하게 막는다.
@@ -181,10 +209,14 @@ class _FeedbackSettingState extends State<_FeedbackSetting> {
                   Expanded(
                     child: Text(_title, style: textTheme.bodyMedium),
                   ),
-                  Switch(
-                    value: enabled,
-                    onChanged: settings == null ? null : _toggle,
-                  ),
+                  // 설정을 아직 못 읽었으면 꺼짐처럼 보이지 않게 스위치 대신 안내를 보여준다.
+                  if (settings == null)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Text('불러오는 중...', style: textTheme.bodySmall),
+                    )
+                  else
+                    Switch(value: enabled, onChanged: _toggle),
                 ],
               ),
             ),
@@ -211,6 +243,108 @@ class _FeedbackSettingState extends State<_FeedbackSetting> {
                       label: '$level',
                       onChanged: (v) => setState(() => _dragLevel = v.round()),
                       onChangeEnd: (v) => _commitLevel(v.round()),
+                    ),
+                    Row(
+                      children: [
+                        Text('종류', style: textTheme.bodySmall),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Wrap(
+                            spacing: 8,
+                            children: [
+                              for (var i = 0; i < _patternLabels.length; i++)
+                                ChoiceChip(
+                                  label: Text(_patternLabels[i]),
+                                  selected: _patternOf(settings) == i,
+                                  onSelected: (_) => _commitPattern(i),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// 고개 떨굼 감지 on/off. 켜 두면 고개가 갑자기 떨어질 때 기기가 짧게 진동한다.
+/// 값의 원본은 기기에서 읽어온 [DeviceConnection.settings]이다.
+class _HeadDropSetting extends StatelessWidget {
+  const _HeadDropSetting();
+
+  @override
+  Widget build(BuildContext context) {
+    final connection = DeviceConnection.instance;
+    final textTheme = Theme.of(context).textTheme;
+
+    return ListenableBuilder(
+      listenable: connection,
+      builder: (context, _) {
+        final settings = connection.settings;
+        final row = Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 12, 4),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.vertical_align_bottom_rounded,
+                color: AppColors.textSecondary,
+                size: 22,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('고개 떨굼 감지', style: textTheme.bodyMedium),
+                    Text('고개가 갑자기 떨어지면 짧게 알려줘요', style: textTheme.bodySmall),
+                  ],
+                ),
+              ),
+              if (settings == null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Text('불러오는 중...', style: textTheme.bodySmall),
+                )
+              else
+                Switch(
+                  value: settings.headDropEnabled,
+                  onChanged: (on) => connection.updateSettings(
+                    settings.copyWith(headDropEnabled: on),
+                  ),
+                ),
+            ],
+          ),
+        );
+        return Column(
+          children: [
+            row,
+            if (settings != null && settings.headDropEnabled)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(34, 0, 20, 12),
+                child: Row(
+                  children: [
+                    Text('민감도', style: textTheme.bodySmall),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Wrap(
+                        spacing: 8,
+                        children: [
+                          for (var i = 0; i < HeadDropSensitivity.count; i++)
+                            ChoiceChip(
+                              label: Text(HeadDropSensitivity.labels[i]),
+                              selected: settings.headDropSensitivity == i,
+                              onSelected: (_) => connection.updateSettings(
+                                settings.copyWith(headDropSensitivity: i),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ],
                 ),

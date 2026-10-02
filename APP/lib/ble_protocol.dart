@@ -24,12 +24,12 @@ class BleProtocol {
   );
 
   /// 설정 characteristic (read / write). 페이로드는 [DeviceSettings] 참고.
-  /// 3바이트: [음량, 진동, 플래그(bit0=소리 on, bit1=진동 on)].
+  /// 6바이트: [음량, 진동, 플래그(bit0=소리 on, bit1=진동 on, bit2=고개 떨굼 감지 on), 진동 패턴, 소리 패턴, 고개 떨굼 민감도].
   /// 설정의 원본은 기기(NVS)이므로 앱은 연결할 때마다 이 값을 읽어 온다.
   static final Guid settingsChar = Guid('8e7f0004-6c1b-4d3a-9f2e-3dd6a5e0b001');
 
-  /// 미리보기 characteristic (write): [종류(0=소리, 1=진동), 단계(1~5)].
-  /// 저장은 하지 않고 기기가 잠깐 울리거나 진동하게만 한다.
+  /// 미리보기 characteristic (write): [종류(0=소리, 1=진동), 단계(1~5), 패턴].
+  /// 저장은 하지 않고 기기가 그 패턴을 두 주기(2.4초) 울리거나 진동하게만 한다.
   static final Guid previewChar = Guid('8e7f0005-6c1b-4d3a-9f2e-3dd6a5e0b001');
 }
 
@@ -42,7 +42,27 @@ class SettingLevel {
   static const int defaultLevel = 3;
 }
 
-/// 기기에 저장된 사용자 설정. 페이로드: [음량 1~5, 진동 1~5, 플래그].
+/// 진동 / 소리 패턴 종류. 펌웨어의 VIB_PATTERN_COUNT / SOUND_PATTERN_COUNT 와 같아야 하고,
+/// 모든 패턴이 같은 1.2초 주기를 쓴다.
+class FeedbackPattern {
+  FeedbackPattern._();
+
+  static const int vibrationCount = 2;
+  static const int soundCount = 3;
+  static const List<String> vibrationLabels = ['진동 1', '진동 2'];
+  static const List<String> soundLabels = ['소리 1', '소리 2', '소리 3'];
+}
+
+/// 고개 떨굼 감지 민감도. 기기의 HEAD_DROP_THRESHOLD(1.5 / 1.8 / 2.1 rad/s)와 같은 순서여야 한다.
+class HeadDropSensitivity {
+  HeadDropSensitivity._();
+
+  static const int count = 3;
+  static const int defaultIndex = 1;
+  static const List<String> labels = ['민감', '보통', '둔감'];
+}
+
+/// 기기에 저장된 사용자 설정. 페이로드: [음량 1~5, 진동 1~5, 플래그, 진동 패턴, 소리 패턴].
 /// 플래그는 bit0=소리 켜짐, bit1=진동 켜짐.
 ///
 /// 꺼도 단계는 그대로 두므로 다시 켜면 직전 세기로 돌아온다. 그래서 "꺼짐"을 0단계로
@@ -54,42 +74,73 @@ class DeviceSettings {
     required this.vibration,
     required this.soundEnabled,
     required this.vibrationEnabled,
+    this.vibrationPattern = 0,
+    this.soundPattern = 0,
+    this.headDropEnabled = true,
+    this.headDropSensitivity = HeadDropSensitivity.defaultIndex,
   });
 
   final int volume;
   final int vibration;
   final bool soundEnabled;
   final bool vibrationEnabled;
+  final int vibrationPattern;
+  final int soundPattern;
+
+  /// 고개 떨굼 감지(자이로) 켜짐. 졸음 경고와 별개이므로 위 두 on/off 와 상관없이 끌 수 있다.
+  final bool headDropEnabled;
+
+  /// 고개 떨굼 민감도(0=민감, 1=보통, 2=둔감).
+  final int headDropSensitivity;
 
   DeviceSettings copyWith({
     int? volume,
     int? vibration,
     bool? soundEnabled,
     bool? vibrationEnabled,
+    int? vibrationPattern,
+    int? soundPattern,
+    bool? headDropEnabled,
+    int? headDropSensitivity,
   }) => DeviceSettings(
     volume: volume ?? this.volume,
     vibration: vibration ?? this.vibration,
     soundEnabled: soundEnabled ?? this.soundEnabled,
     vibrationEnabled: vibrationEnabled ?? this.vibrationEnabled,
+    vibrationPattern: vibrationPattern ?? this.vibrationPattern,
+    soundPattern: soundPattern ?? this.soundPattern,
+    headDropEnabled: headDropEnabled ?? this.headDropEnabled,
+    headDropSensitivity: headDropSensitivity ?? this.headDropSensitivity,
   );
 
   static DeviceSettings? parse(List<int> bytes) {
     if (bytes.length < 2) return null;
     int clamp(int v) => v.clamp(SettingLevel.min, SettingLevel.max);
     // 플래그를 보내지 않는 구버전 펌웨어는 둘 다 켜진 것으로 본다.
-    final flags = bytes.length >= 3 ? bytes[2] : 0x03;
+    final flags = bytes.length >= 3 ? bytes[2] : 0x07;
+    int pattern(int at, int count) =>
+        bytes.length > at ? bytes[at].clamp(0, count - 1) : 0;
     return DeviceSettings(
       volume: clamp(bytes[0]),
       vibration: clamp(bytes[1]),
       soundEnabled: flags & 1 != 0,
       vibrationEnabled: flags & 2 != 0,
+      vibrationPattern: pattern(3, FeedbackPattern.vibrationCount),
+      soundPattern: pattern(4, FeedbackPattern.soundCount),
+      headDropEnabled: flags & 4 != 0,
+      headDropSensitivity: bytes.length > 5
+          ? bytes[5].clamp(0, HeadDropSensitivity.count - 1)
+          : HeadDropSensitivity.defaultIndex,
     );
   }
 
   List<int> toBytes() => [
     volume,
     vibration,
-    (soundEnabled ? 1 : 0) | (vibrationEnabled ? 2 : 0),
+    (soundEnabled ? 1 : 0) | (vibrationEnabled ? 2 : 0) | (headDropEnabled ? 4 : 0),
+    vibrationPattern,
+    soundPattern,
+    headDropSensitivity,
   ];
 }
 

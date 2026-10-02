@@ -114,7 +114,10 @@ class SessionCache extends ChangeNotifier {
   ///
   /// 앱이 강제 종료돼도 착용 시간이 무한히 늘어나지 않도록, `endedAt`은
   /// "마지막으로 착용이 확인된 시각"으로 둔다.
-  void extendSession(int sessionId, DateTime at) {
+  ///
+  /// [notify]가 false면 파일 저장만 예약하고 화면에는 알리지 않는다. 착용 중 주기적으로
+  /// 시각만 늘릴 때 쓴다(화면은 진행 중인 세션의 시간을 스스로 계산해서 그린다).
+  void extendSession(int sessionId, DateTime at, {bool notify = true}) {
     _replaceSession(
       sessionId,
       (s) => Session(
@@ -123,6 +126,7 @@ class SessionCache extends ChangeNotifier {
         endedAt: at,
         detectionCount: s.detectionCount,
       ),
+      notify: notify,
     );
   }
 
@@ -150,11 +154,15 @@ class SessionCache extends ChangeNotifier {
     );
   }
 
-  void _replaceSession(int sessionId, Session Function(Session) update) {
+  void _replaceSession(
+    int sessionId,
+    Session Function(Session) update, {
+    bool notify = true,
+  }) {
     final index = _sessions.indexWhere((s) => s.id == sessionId);
     if (index < 0) return;
     _sessions[index] = update(_sessions[index]);
-    _changed();
+    _changed(notify: notify);
   }
 
   List<Session> sessionsBetween(DateTime start, DateTime end) =>
@@ -194,10 +202,11 @@ class SessionCache extends ChangeNotifier {
         removedDetections != _detections.length;
   }
 
-  void _changed() {
+  void _changed({bool notify = true}) {
     if (!_loaded) return;
-    _prune();
     _scheduleSave();
+    if (!notify) return;
+    _prune();
     notifyListeners();
   }
 

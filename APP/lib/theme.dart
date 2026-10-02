@@ -5,8 +5,6 @@ class AppColors {
   AppColors._();
 
   static const Color primary = Color(0xFF1E6FEB);
-  static const Color primaryDark = Color(0xFF0D47A1);
-  static const Color primaryLight = Color(0xFF64B5F6);
 
   static const Color background = Color(0xFFF5F7FA);
   static const Color surface = Colors.white;
@@ -38,10 +36,6 @@ class AppTheme {
         centerTitle: true,
       ),
       textTheme: const TextTheme(
-        headlineMedium: TextStyle(
-          fontWeight: FontWeight.bold,
-          color: AppColors.textPrimary,
-        ),
         titleMedium: TextStyle(
           fontWeight: FontWeight.w600,
           color: AppColors.textPrimary,

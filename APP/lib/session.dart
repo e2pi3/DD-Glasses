@@ -1,4 +1,4 @@
-/// 착용 1회 = 세션 1건. 통계 화면은 전부 이 테이블에서 나옵니다.
+/// 착용 1회 = 세션 1건. 통계 화면은 세션과 졸음 감지 기록에서 계산한다.
 class Session {
   final int? id;
   final DateTime startedAt;
@@ -37,8 +37,7 @@ class DetectionEvent {
   final int sessionId;
   final DateTime occurredAt;
 
-  /// 판정 근거. 경고 화면에 한 줄로 노출합니다.
-  /// 근거 없이 결과만 보여주면 오탐 시 사용자가 앱을 불신하게 됩니다.
+  /// 판정 근거. 화면에는 아직 보여주지 않지만, 감지가 잡힌 이유를 나중에 보여줄 수 있게 함께 저장한다.
   final double perclos;
   final double maxClosedSeconds;
 
@@ -49,10 +48,6 @@ class DetectionEvent {
     required this.perclos,
     required this.maxClosedSeconds,
   });
-
-  String get reasonLine =>
-      '눈 감김 ${maxClosedSeconds.toStringAsFixed(1)}초 · '
-      'PERCLOS ${(perclos * 100).round()}%';
 
   Map<String, Object?> toMap() => {
     'id': id,
@@ -69,17 +64,4 @@ class DetectionEvent {
     perclos: (m['perclos'] as num).toDouble(),
     maxClosedSeconds: (m['max_closed_seconds'] as num).toDouble(),
   );
-}
-
-/// 통계 화면 막대 하나. 데이터가 없는 날도 0으로 채워서 내려보냅니다.
-class DailyStat {
-  final DateTime day;
-  final Duration wornDuration;
-  final int detectionCount;
-
-  const DailyStat({
-    required this.day,
-    required this.wornDuration,
-    required this.detectionCount,
-  });
 }

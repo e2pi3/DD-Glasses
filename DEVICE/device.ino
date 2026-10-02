@@ -67,7 +67,36 @@ constexpr uint8_t LEVEL_DEFAULT = 3;
 static const uint8_t BUZZ_DUTY[LEVEL_MAX + 1] = {0, 6, 12, 22, 42, 80};
 static const uint8_t VIB_DUTY[LEVEL_MAX + 1]  = {0, 110, 140, 175, 215, 255};
 
+// 진동/소리 패턴. 모든 패턴이 같은 주기(ALERT_PERIOD_MS = 1.2초)를 쓰고, 그 주기의 앞 0.6초 안에서만
+// 울린 뒤 0.6초를 쉰다. 그래서 어떤 종류를 골라도 경고의 "한 박자"가 같다.
+// 주기를 50ms 칸 24개로 나눠 켜질 칸을 비트로 표현한다.
+//   진동 1: 우웅-          (0~600ms 연속)
+//   진동 2: 웅 웅-         (200ms 울림, 100ms 쉼, 300ms 울림)
+//   소리 1: 삐-            (0~600ms 연속)
+//   소리 2: 삐 삐-         (200ms 울림, 100ms 쉼, 300ms 울림)
+//   소리 3: 삐삐삐삐-      (100ms 울림/50ms 쉼 x3, 마지막 150ms 울림)
+constexpr uint32_t SLOT_MS          = 50;
+constexpr uint32_t ALERT_PERIOD_MS  = 1200;
+constexpr uint8_t  VIB_PATTERN_COUNT   = 2;
+constexpr uint8_t  SOUND_PATTERN_COUNT = 3;
+constexpr uint32_t slots(int from, int to) { return ((1u << (to - from + 1)) - 1u) << from; }
+static const uint32_t VIB_PATTERN[VIB_PATTERN_COUNT] = {
+  slots(0, 11),
+  slots(0, 3) | slots(6, 11),
+};
+static const uint32_t SOUND_PATTERN[SOUND_PATTERN_COUNT] = {
+  slots(0, 11),
+  slots(0, 3) | slots(6, 11),
+  slots(0, 1) | slots(3, 4) | slots(6, 7) | slots(9, 11),
+};
+// 주기 안에서 elapsedMs 가 패턴의 켜진 칸에 해당하는지
+static inline bool patternOn(uint32_t mask, uint32_t elapsedMs) {
+  return (mask >> ((elapsedMs % ALERT_PERIOD_MS) / SLOT_MS)) & 1u;
+}
+
 static Preferences prefs;
+static volatile uint8_t vibrationPattern = 0;
+static volatile uint8_t soundPattern     = 0;
 static volatile uint8_t volumeLevel    = LEVEL_DEFAULT;
 static volatile uint8_t vibrationLevel = LEVEL_DEFAULT;
 static volatile bool    soundEnabled     = true;
@@ -79,41 +108,65 @@ static volatile bool    settingsDirty  = false;   // BLE 콜백에서 바뀐 값
 // 착용 전에는 카메라를 꺼 두고(휴면), 착용이 확정되면 켜서 졸음 판정을 시작한다.
 constexpr int      PROX_WEAR_THRESHOLD = 15;
 constexpr uint32_t WEAR_CONFIRM_MS     = 2000;
-static bool     worn          = false;
+static volatile bool worn     = false;   // sensorTask 도 읽는다
 static bool     cameraOn      = false;
 static bool     proxWasHigh   = false;
 static uint32_t proxHighSince = 0;
 
 // ===== 졸음 경고 =====
-// 눈 감김이 CLOSED_TRIGGER 회 연속(0.5s x 4 = 2초)이면 진동을 0.75초 울림/0.75초 쉼으로 반복하고,
+// 눈 감김이 CLOSED_TRIGGER 회 연속(0.5s x 4 = 2초)이면 선택한 진동 패턴을 1.2초 주기로 반복하고,
 // 진동이 ALERT_VIB_ONLY_PULSES 번 울리는 동안 버튼 반응이 없으면 그 뒤부터 소리도 함께 울린다.
 // 버튼을 누르면 경고를 멈추고 RESUME_DELAY_MS 뒤부터 다시 측정한다.
 // 경고 중 눈 뜸이 OPEN_RECOVER 회 연속이면 버튼 없이도 경고를 멈추고 바로 다시 측정한다.
 constexpr uint32_t CLOSED_TRIGGER        = 4;
-constexpr uint32_t ALERT_PULSE_MS        = 750;
-constexpr uint32_t ALERT_PERIOD_MS       = 1500;
 constexpr uint32_t ALERT_VIB_ONLY_PULSES = 4;
 constexpr uint32_t RESUME_DELAY_MS       = 1500;
 constexpr uint32_t OPEN_RECOVER          = 4;
+// 출력 태스크(버튼/진동/부저)와 loop 가 함께 보는 값은 volatile
 static uint32_t closedStreak = 0;
 static uint32_t openStreak   = 0;
-static bool     alertActive  = false;
-static uint32_t alertStart   = 0;
-static uint32_t resumeAt     = 0;
+static volatile bool     alertActive  = false;
+static volatile uint32_t alertStart   = 0;
+static volatile uint32_t resumeAt     = 0;
 // 버튼 반응은 500ms 주기와 무관하게 매 루프에서 처리하므로, 눌린 사실을 여기에 기억해두고
 // 다음 텔레메트리에 실어 보낸 뒤 지운다. 그 순간의 버튼 상태만 보내면 프레임 사이에
 // 눌렀다 뗀 반응을 앱이 놓친다.
-static bool     buttonReacted = false;
+static volatile bool buttonReacted = false;
+
+// ===== 고개 떨굼 감지 =====
+// 자이로 z 축 각속도(rad/s)가 +임계값 이상일 때(고개가 아래로 떨어지는 방향)만 고개를 떨군 것으로 보고 짧게(0.4초) 진동한다.
+// 고개를 다시 드는 동작은 음수라서 울리지 않는다.
+// 졸음 경고와는 별개 기능이고, 설정에서 켜고 끌 수 있다. 착용 중이고 졸음 경고가 울리지 않을 때만 동작한다.
+// 축/부호는 센서를 붙인 방향에 따라 달라진다.
+constexpr uint32_t GYRO_INTERVAL_MS         = 250;    // 자이로 읽기 주기 (눈 추론/근접/가속도는 500ms)
+// 민감도별 임계값(rad/s, gyro.z 양수 = 떨어지는 방향). 설정에서 고른다: 0=민감, 1=보통, 2=둔감
+constexpr uint8_t  HEAD_DROP_SENS_COUNT   = 3;
+constexpr uint8_t  HEAD_DROP_SENS_DEFAULT = 1;
+static const float HEAD_DROP_THRESHOLD[HEAD_DROP_SENS_COUNT] = {1.5f, 1.8f, 2.1f};
+constexpr uint32_t HEAD_DROP_VIB_MS         = 400;
+constexpr uint32_t HEAD_DROP_COOLDOWN_MS    = 1000;   // 같은 동작에서 연달아 울리지 않게
+static volatile bool headDropEnabled = true;
+static volatile uint8_t headDropSensitivity = HEAD_DROP_SENS_DEFAULT;
+static volatile bool headDropPending = false;         // sensorTask 가 요청 -> outputTask 가 울림
+static uint32_t headDropStart  = 0;
+static bool     headDropActive = false;
+
+// I2C 는 sensorTask 한 곳에서만 읽는다(Wire 는 태스크 간에 안전하지 않다). loop 는 마지막 값만 가져다 쓴다.
+static volatile int latestProx = -1;
+static sensors_event_t latestA, latestG;
+static portMUX_TYPE imuMux = portMUX_INITIALIZER_UNLOCKED;
 
 // 앱의 설정 화면에서 값을 바꿀 때 바로 확인할 수 있게 잠깐 울리는 미리보기
-constexpr uint32_t PREVIEW_MS = 700;
+constexpr uint32_t PREVIEW_MS = 2 * ALERT_PERIOD_MS;   // 선택한 패턴을 두 주기 들려준다 (박자가 반복되는 걸 들을 수 있게)
 enum PreviewType : uint8_t { PREVIEW_SOUND = 0, PREVIEW_VIBRATION = 1 };
 static volatile bool    previewPending = false;
 static volatile uint8_t previewReqType = 0;
 static volatile uint8_t previewReqLevel = LEVEL_DEFAULT;
+static volatile uint8_t previewReqPattern = 0;
 static uint32_t previewStart = 0;
 static uint8_t  previewType  = 0;
 static uint8_t  previewLevel = LEVEL_DEFAULT;
+static uint8_t  previewPattern = 0;
 static bool     previewActive = false;
 
 // ===== BLE (앱의 ble_protocol.dart 와 반드시 일치) =====
@@ -121,8 +174,8 @@ static bool     previewActive = false;
 #define UUID_TELEMETRY_SERVICE   "8e7f0001-6c1b-4d3a-9f2e-3dd6a5e0b001"
 #define UUID_TELEMETRY_CHAR      "8e7f0002-6c1b-4d3a-9f2e-3dd6a5e0b001"   // notify
 #define UUID_SETTINGS_SERVICE    "8e7f0003-6c1b-4d3a-9f2e-3dd6a5e0b001"
-#define UUID_SETTINGS_CHAR       "8e7f0004-6c1b-4d3a-9f2e-3dd6a5e0b001"   // read / write : [음량, 진동, 플래그(bit0=소리 on, bit1=진동 on)]
-#define UUID_PREVIEW_CHAR        "8e7f0005-6c1b-4d3a-9f2e-3dd6a5e0b001"   // write : [종류(0=소리,1=진동), 단계]
+#define UUID_SETTINGS_CHAR       "8e7f0004-6c1b-4d3a-9f2e-3dd6a5e0b001"   // read / write : [음량, 진동, 플래그(bit0=소리 on, bit1=진동 on, bit2=고개 떨굼 감지 on), 진동 패턴, 소리 패턴, 고개 떨굼 민감도(0~2)]
+#define UUID_PREVIEW_CHAR        "8e7f0005-6c1b-4d3a-9f2e-3dd6a5e0b001"   // write : [종류(0=소리,1=진동), 단계, 패턴]
 
 static BLEServer*         bleServer    = nullptr;
 static BLECharacteristic* telemetryChr = nullptr;
@@ -303,9 +356,16 @@ void loadSettings() {
   soundEnabled     = prefs.getBool("vol_on", true);
   vibrationEnabled = prefs.getBool("vib_on", true);
   if (!soundEnabled && !vibrationEnabled) soundEnabled = true;
-  Serial.printf("설정 로드: 음량=%u(%s) 진동=%u(%s)\n",
-                volumeLevel, soundEnabled ? "on" : "off",
-                vibrationLevel, vibrationEnabled ? "on" : "off");
+  uint8_t vp = prefs.getUChar("vib_pat", 0);
+  uint8_t sp = prefs.getUChar("snd_pat", 0);
+  vibrationPattern = vp < VIB_PATTERN_COUNT ? vp : 0;     // 예전에 3번째 진동을 저장해 둔 기기는 1번으로
+  soundPattern     = sp < SOUND_PATTERN_COUNT ? sp : 0;
+  headDropEnabled  = prefs.getBool("hd_on", true);
+  uint8_t hs = prefs.getUChar("hd_sens", HEAD_DROP_SENS_DEFAULT);
+  headDropSensitivity = hs < HEAD_DROP_SENS_COUNT ? hs : HEAD_DROP_SENS_DEFAULT;
+  Serial.printf("설정 로드: 음량=%u(%s,패턴%u) 진동=%u(%s,패턴%u)\n",
+                volumeLevel, soundEnabled ? "on" : "off", soundPattern,
+                vibrationLevel, vibrationEnabled ? "on" : "off", vibrationPattern);
 }
 
 void saveSettingsIfDirty() {
@@ -315,9 +375,14 @@ void saveSettingsIfDirty() {
   prefs.putUChar("vib", vibrationLevel);
   prefs.putBool("vol_on", soundEnabled);
   prefs.putBool("vib_on", vibrationEnabled);
-  Serial.printf("설정 저장: 음량=%u(%s) 진동=%u(%s)\n",
-                volumeLevel, soundEnabled ? "on" : "off",
-                vibrationLevel, vibrationEnabled ? "on" : "off");
+  prefs.putUChar("vib_pat", vibrationPattern);
+  prefs.putUChar("snd_pat", soundPattern);
+  prefs.putBool("hd_on", headDropEnabled);
+  prefs.putUChar("hd_sens", headDropSensitivity);
+  Serial.printf("설정 저장: 음량=%u(%s,패턴%u) 진동=%u(%s,패턴%u)\n",
+                volumeLevel, soundEnabled ? "on" : "off", soundPattern,
+                vibrationLevel, vibrationEnabled ? "on" : "off", vibrationPattern);
+  refreshSettingsValue();
 }
 
 // ---- BLE 콜백 (BLE 태스크에서 실행되므로 loop 와 공유하는 값만 건드린다)
@@ -339,16 +404,34 @@ class SettingsCallbacks : public BLECharacteristicCallbacks {
     const uint8_t* d = c->getData();
     if (d[0] < LEVEL_MIN || d[0] > LEVEL_MAX || d[1] < LEVEL_MIN || d[1] > LEVEL_MAX) return;
     // 플래그를 보내지 않는 구버전 앱은 둘 다 켜짐으로 본다.
-    bool snd = true, vbr = true;
+    bool snd = true, vbr = true, hd = headDropEnabled;
     if (c->getLength() >= 3) {
       snd = d[2] & 1;
       vbr = d[2] & 2;
+      hd  = d[2] & 4;
       if (!snd && !vbr) return;   // 둘 다 끄면 경고를 전달할 수단이 없으므로 거부한다
     }
+    // 패턴을 보내지 않는 구버전 앱은 기존 패턴을 유지한다.
+    uint8_t vp = vibrationPattern, sp = soundPattern;
+    if (c->getLength() >= 5) {
+      if (d[3] >= VIB_PATTERN_COUNT || d[4] >= SOUND_PATTERN_COUNT) return;
+      vp = d[3];
+      sp = d[4];
+    }
+    // 민감도를 보내지 않는 구버전 앱은 기존 값을 유지한다.
+    uint8_t hs = headDropSensitivity;
+    if (c->getLength() >= 6) {
+      if (d[5] >= HEAD_DROP_SENS_COUNT) return;
+      hs = d[5];
+    }
+    vibrationPattern = vp;
+    soundPattern     = sp;
+    headDropSensitivity = hs;
     volumeLevel      = d[0];
     vibrationLevel   = d[1];
     soundEnabled     = snd;
     vibrationEnabled = vbr;
+    headDropEnabled  = hd;
     settingsDirty    = true;
   }
 };
@@ -358,8 +441,14 @@ class PreviewCallbacks : public BLECharacteristicCallbacks {
     if (c->getLength() < 2) return;
     const uint8_t* d = c->getData();
     if (d[0] > PREVIEW_VIBRATION || d[1] < LEVEL_MIN || d[1] > LEVEL_MAX) return;
-    previewReqType  = d[0];
-    previewReqLevel = d[1];
+    uint8_t pat = d[0] == PREVIEW_SOUND ? soundPattern : vibrationPattern;   // 패턴을 안 보내면 저장된 패턴
+    if (c->getLength() >= 3) {
+      if (d[2] >= (d[0] == PREVIEW_SOUND ? SOUND_PATTERN_COUNT : VIB_PATTERN_COUNT)) return;
+      pat = d[2];
+    }
+    previewReqType    = d[0];
+    previewReqLevel   = d[1];
+    previewReqPattern = pat;
     previewPending  = true;
   }
 };
@@ -393,11 +482,13 @@ void initBle() {
   Serial.println("BLE 광고 시작: " BLE_DEVICE_NAME);
 }
 
-// 현재 설정을 읽기 값으로 갱신 (앱이 언제 읽어도 최신값이 나오도록 loop 에서 매번 호출)
+// 현재 설정을 읽기 값으로 갱신. 부팅 직후와 설정이 바뀌어 저장할 때만 호출한다.
+// (loop 에서 매번 덮어쓰면 BLE 태스크의 읽기/쓰기와 겹쳐 앱이 빈 값을 읽거나 쓰기가 유실될 수 있다)
 void refreshSettingsValue() {
-  uint8_t v[3] = {volumeLevel, vibrationLevel,
-                  (uint8_t)((soundEnabled ? 1 : 0) | (vibrationEnabled ? 2 : 0))};
-  settingsChr->setValue(v, 3);
+  uint8_t v[6] = {volumeLevel, vibrationLevel,
+                  (uint8_t)((soundEnabled ? 1 : 0) | (vibrationEnabled ? 2 : 0) | (headDropEnabled ? 4 : 0)),
+                  vibrationPattern, soundPattern, headDropSensitivity};
+  settingsChr->setValue(v, 6);
 }
 
 // 텔레메트리 프레임 (16바이트, 기본 MTU 23 에서도 한 패킷) — 앱 ble_protocol.dart 의 SensorFrame.parse 참고
@@ -461,9 +552,9 @@ void stopAlert(const char* why) {
   Serial.printf("졸음 경고 종료 (%s)\n", why);
 }
 
-// 진동/부저 출력을 매 루프 갱신. 앱의 설정 미리보기가 졸음 경고보다 우선한다.
-//  - 미리보기: 소리는 200ms 울림 x2, 진동은 700ms 연속. 앱이 명시적으로 요청한 것이므로 on/off 와 무관하게 울린다.
-//  - 졸음 경고: 진동 0.75s 울림/0.75s 쉼 반복, 4번째 울림이 끝난 뒤부터 같은 박자로 소리도 함께.
+// 진동/부저 출력을 갱신. 앱의 설정 미리보기가 졸음 경고보다 우선한다.
+//  - 미리보기: 선택한 패턴을 두 주기(2.4초) 들려준다. 앱이 명시적으로 요청한 것이므로 on/off 와 무관하게 울린다.
+//  - 졸음 경고: 선택한 진동 패턴을 1.2초 주기로 반복, 4번째 주기가 끝난 뒤부터 같은 박자로 소리 패턴도 함께.
 //    꺼 둔 쪽은 울리지 않고, 진동이 꺼져 있으면 진동만 울리는 구간이 의미가 없으므로
 //    소리를 첫 펄스부터 바로 울린다 (안 그러면 처음 6초간 아무 경고도 나가지 않는다).
 void updateOutputs() {
@@ -472,30 +563,94 @@ void updateOutputs() {
     previewPending = false;
     previewType    = previewReqType;
     previewLevel   = previewReqLevel;
+    previewPattern = previewReqPattern;
     previewStart   = now;
     previewActive  = true;
   }
   if (previewActive && now - previewStart >= PREVIEW_MS) previewActive = false;
 
+  if (headDropPending) {
+    headDropPending = false;
+    headDropStart   = now;
+    headDropActive  = true;
+  }
+  if (headDropActive && now - headDropStart >= HEAD_DROP_VIB_MS) headDropActive = false;
+
   uint8_t buzz = 0, vib = 0;
   if (previewActive) {
     if (previewType == PREVIEW_SOUND) {
-      if (((now - previewStart) % 350) < 200) buzz = BUZZ_DUTY[previewLevel];
+      if (patternOn(SOUND_PATTERN[previewPattern], now - previewStart)) buzz = BUZZ_DUTY[previewLevel];
     } else {
-      vib = VIB_DUTY[previewLevel];
+      if (patternOn(VIB_PATTERN[previewPattern], now - previewStart)) vib = VIB_DUTY[previewLevel];
     }
   } else if (alertActive) {
     uint32_t t = now - alertStart;
-    if ((t % ALERT_PERIOD_MS) < ALERT_PULSE_MS) {
-      if (vibrationEnabled) vib = VIB_DUTY[vibrationLevel];
-      if (soundEnabled &&
-          (!vibrationEnabled || t / ALERT_PERIOD_MS >= ALERT_VIB_ONLY_PULSES)) {
-        buzz = BUZZ_DUTY[volumeLevel];
-      }
+    if (vibrationEnabled && patternOn(VIB_PATTERN[vibrationPattern], t)) vib = VIB_DUTY[vibrationLevel];
+    if (soundEnabled && (!vibrationEnabled || t / ALERT_PERIOD_MS >= ALERT_VIB_ONLY_PULSES) &&
+        patternOn(SOUND_PATTERN[soundPattern], t)) {
+      buzz = BUZZ_DUTY[volumeLevel];
     }
+  } else if (headDropActive) {
+    // 고개 떨굼 알림: 진동이 꺼져 있으면 같은 길이로 짧게 울린다
+    if (vibrationEnabled) vib = VIB_DUTY[vibrationLevel];
+    else buzz = BUZZ_DUTY[volumeLevel];
   }
   ledcWrite(BUZZER_PIN, buzz);
   ledcWrite(VIB_PIN, vib);
+}
+
+// 버튼 입력 처리. 경고 중에 눌리면 경고를 끄고 잠시 쉰 뒤 다시 측정한다.
+void handleButton() {
+  if (buttonPressed() && alertActive) {
+    resumeAt = millis() + RESUME_DELAY_MS;
+    buttonReacted = true;
+    stopAlert("버튼 반응");
+  }
+}
+
+// 버튼과 진동/부저는 loop 와 별도의 태스크에서 5ms 마다 돌린다.
+// loop 는 500ms 주기마다 촬영/추론/BLE 전송으로 수백 ms 막히는데, 출력을 loop 에서 갱신하면
+// 그 사이 켜질 칸이 통째로 건너뛰어져 박자가 빠지고 짧은 버튼 입력도 놓친다.
+void outputTask(void*) {
+  for (;;) {
+    handleButton();
+    updateOutputs();
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+}
+
+// I2C 센서(자이로/가속도, 근접)를 읽는 태스크. 자이로는 250ms 마다 읽어 고개 떨굼을 판정하고,
+// 근접은 500ms 마다(두 번에 한 번) 읽는다. loop 가 촬영/추론으로 막혀도 주기가 흔들리지 않는다.
+void sensorTask(void*) {
+  uint32_t next = millis();
+  uint32_t round = 0;
+  uint32_t lastDrop = 0;
+  bool dropped = false;
+  for (;;) {
+    if (mpuOk) {
+      sensors_event_t a, g, t;
+      mpu.getEvent(&a, &g, &t);
+      portENTER_CRITICAL(&imuMux);
+      latestA = a;
+      latestG = g;
+      portEXIT_CRITICAL(&imuMux);
+
+      uint32_t now = millis();
+      if (headDropEnabled && worn && !alertActive && g.gyro.z >= HEAD_DROP_THRESHOLD[headDropSensitivity] &&
+          (!dropped || now - lastDrop >= HEAD_DROP_COOLDOWN_MS)) {
+        dropped  = true;
+        lastDrop = now;
+        headDropPending = true;
+        Serial.printf("고개 떨굼 감지 gyro.z=%.2f rad/s\n", g.gyro.z);
+      }
+    }
+    if (vcnlOk && (round++ % 2) == 0) latestProx = (int)vcnl.getProximity();
+
+    next += GYRO_INTERVAL_MS;
+    int32_t wait = (int32_t)(next - millis());
+    if (wait > 0) vTaskDelay(pdMS_TO_TICKS(wait));
+    else next = millis();
+  }
 }
 
 // QVGA 흑백 프레임 -> 좌측 240x240 크롭 -> 3x3 평균 -> min-max -> int8 입력
@@ -564,7 +719,10 @@ void setup() {
   initSensors();   // 실패해도 추론은 계속
   loadSettings();
   initOutputs();
+  xTaskCreatePinnedToCore(outputTask, "output", 4096, nullptr, 3, nullptr, 1);
+  xTaskCreatePinnedToCore(sensorTask, "sensor", 4096, nullptr, 2, nullptr, 1);   // I2C 는 이 태스크만 쓴다
   initBle();
+  refreshSettingsValue();
 
   Serial.println("시작 - 착용 대기 (카메라 휴면)");
 }
@@ -573,27 +731,19 @@ void loop() {
   static uint32_t next = millis();
   static uint32_t count = 0;
 
-  // 버튼/출력은 매 루프마다 확인 (500ms 주기와 무관하게 즉시 반응)
-  if (buttonPressed() && alertActive) {
-    stopAlert("버튼 반응");
-    closedStreak = 0;
-    resumeAt = millis() + RESUME_DELAY_MS;
-    buttonReacted = true;
-  }
-  updateOutputs();
+  // 버튼/진동/부저는 outputTask 가 처리한다. 여기서는 설정 저장/노출만.
   saveSettingsIfDirty();
-  refreshSettingsValue();
 
   if ((int32_t)(millis() - next) < 0) {
-    // 다음 주기까지 CPU 를 양보한다. 미착용 중엔 반응성이 필요한 게 앱 미리보기뿐이라 길게 쉰다.
-    delay(worn ? 2 : 20);
+    // 다음 주기까지 CPU 를 양보한다. 출력은 별도 태스크가 처리하므로 길게 쉬어도 된다.
+    delay(worn ? 5 : 20);
     return;
   }
   next += INTERVAL_MS;
   if ((int32_t)(millis() - next) > 0) next = millis() + INTERVAL_MS;  // 처리가 밀리면 재정렬
 
   // ---- 근접 센서 -> 착용 판정
-  int prox = vcnlOk ? (int)vcnl.getProximity() : -1;
+  int prox = vcnlOk ? latestProx : -1;   // sensorTask 가 읽은 최신 값
   uint32_t now = millis();
   if (vcnlOk && prox >= PROX_WEAR_THRESHOLD) {
     if (!proxWasHigh) { proxWasHigh = true; proxHighSince = now; }
@@ -658,14 +808,18 @@ void loop() {
   }
 
   // ---- 가속도/자이로
-  sensors_event_t a, g, temp;
-  if (mpuOk) mpu.getEvent(&a, &g, &temp);
+  sensors_event_t a, g;
+  portENTER_CRITICAL(&imuMux);
+  a = latestA;
+  g = latestG;
+  portEXIT_CRITICAL(&imuMux);
 
   // ---- 앱으로 전송
-  sendTelemetry(eyeOk, closed, pClosed, vcnlOk, prox, mpuOk, a, g, worn,
-                alertActive, buttonReacted);
   // 연결이 끊겨 보내지 못한 반응은 버린다. 나중에 연결됐을 때 뒤늦게 보고되면 안 된다.
+  bool reacted = buttonReacted;
   buttonReacted = false;
+  sendTelemetry(eyeOk, closed, pClosed, vcnlOk && prox >= 0, prox, mpuOk, a, g, worn,
+                alertActive, reacted);
 
   // ---- 출력 (한 줄)
   Serial.printf("[%5lu] %s%s ", (unsigned long)++count, worn ? "착용" : "미착용", alertActive ? "/경고" : "");

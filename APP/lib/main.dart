@@ -52,12 +52,6 @@ class MainNavigation extends StatefulWidget {
 class _MainNavigationState extends State<MainNavigation> {
   int _selectedIndex = 1;
 
-  static const List<Widget> _screens = [
-    StatisticsScreen(),
-    HomeScreen(),
-    SettingScreen(),
-  ];
-
   void _onTabSelected(int index) {
     setState(() => _selectedIndex = index);
   }
@@ -67,7 +61,15 @@ class _MainNavigationState extends State<MainNavigation> {
     return Scaffold(
       extendBody: true,
       appBar: _MainAppBar(title: _kTabTitles[_selectedIndex]),
-      body: IndexedStack(index: _selectedIndex, children: _screens),
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: [
+          // IndexedStack 은 안 보이는 탭도 계속 살려 두므로, 통계 화면에는 지금 보이는지를 알려준다.
+          StatisticsScreen(active: _selectedIndex == 0),
+          const HomeScreen(),
+          const SettingScreen(),
+        ],
+      ),
       bottomNavigationBar: _MainBottomNavBar(
         currentIndex: _selectedIndex,
         onTap: _onTabSelected,
