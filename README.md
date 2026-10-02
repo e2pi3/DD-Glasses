@@ -20,8 +20,9 @@ DD-Glasses/
 └── MODEL/      # 눈 상태 분류 CNN 학습 및 변환
     ├── eye_common.py   # 공통 전처리 (보드와 동일한 연산)
     ├── train.py        # 학습 -> int8 TFLite 변환 -> C 헤더 생성
-    ├── cv.py           # 시간 블록 기반 5-fold 교차검증
-    └── output/         # 학습 결과 (모델, 리포트 등)
+    ├── eye_model.keras         # 추론 모델
+    ├── eye_model_data.h        # 추론 모델
+    └── eye_model_int8.tflite   # 추론 모델        
 ```
 
 <br>
