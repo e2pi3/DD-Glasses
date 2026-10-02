@@ -24,8 +24,8 @@
 #define FRAME_SIZE    FRAMESIZE_SVGA   // 800x600
 #define JPEG_QUALITY  10               // 낮을수록 고화질 (0~63), 학습용이면 8~10 권장
 
-const char* ssid     = "뜨거운지점";
-const char* password = "qwerasdf";
+const char* ssid     = "와이파이 이름";
+const char* password = "와이파이 비밀번호";
 
 WebServer server(80);
 
